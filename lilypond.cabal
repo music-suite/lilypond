@@ -30,7 +30,8 @@ library
         process,
         data-default,
         music-pitch-literal,
-        music-dynamics-literal
+        music-dynamics-literal,
+        nats
     hs-source-dirs: src
     default-language:   Haskell2010
     exposed-modules:

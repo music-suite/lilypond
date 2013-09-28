@@ -16,40 +16,51 @@
 module Music.Lilypond.Pitch (
         Pitch(..),
         PitchClass(..),
+        WhiteKey(..),
         Accidental(..),
         Octaves(..),
         Mode(..),
         OctaveCheck(..),
   ) where
 
+import Data.Char
 import Text.Pretty hiding (Mode)
 import Music.Pitch.Literal
 
-data PitchClass = C | D | E | F | G | A | B
+data WhiteKey = C | D | E | F | G | A | B
     deriving (Eq, Ord, Show, Enum)
 
-newtype Pitch = Pitch { getPitch :: (PitchClass, Accidental, Octaves) }
+newtype Pitch = Pitch { getPitch :: (PitchClass, Octaves) }
     deriving (Eq, Ord, Show)
 
-instance Pretty Pitch where
-    pretty (Pitch (c,a,o)) = string $ pc c ++ acc a ++ oct (o-4)
+data PitchClass = PitchClass WhiteKey Accidental -- see wikipedia, pitch class includes accidental
+    deriving (Eq, Ord, Show) -- can't derive Enum even though isomorphic to (Enum,Enum)?
+
+instance Pretty PitchClass where
+    pretty (PitchClass w a) = string $ pc w ++ acc a
         where
-            pc C = "c" ; pc D = "d" ; pc E = "e" ; pc F = "f"
-            pc G = "g" ; pc A = "a" ; pc B = "b"            
-            acc n | n <  0  =  concat $ replicate (negate n) "es"
-                  | n == 0  =  ""
-                  | n >  0  =  concat $ replicate (n) "is"
+--            pc C = "c" ; pc D = "d" ; pc E = "e" ; pc F = "f"
+--            pc G = "g" ; pc A = "a" ; pc B = "b"     
+            pc = fmap toLower . show       
+            acc DoubleFlat = "eses"
+            acc Flat = "es"
+            acc Natural = ""
+            acc Sharp = "is"
+            acc DoubleSharp = "isis"
+
+instance Pretty Pitch where
+    pretty (Pitch (c,o)) = pretty c <+> (string $ oct (o-4))
+        where
             oct n | n <  0  =  concat $ replicate (negate n) ","
                   | n == 0  =  ""
                   | n >  0  =  concat $ replicate n "'"
 
 instance IsPitch Pitch where
-    fromPitch (PitchL (c, Nothing, o)) = Pitch (toEnum c, 0,       o)                 
-    fromPitch (PitchL (c, Just a, o))  = Pitch (toEnum c, round a, o)
+    fromPitch (PitchL (c, Nothing, o)) = Pitch (PitchClass (toEnum c) Natural           , o)                 
+    fromPitch (PitchL (c, Just a, o))  = Pitch (PitchClass (toEnum c) (toEnum $ round a), o)
 
-
--- | For double flat -2, flat -1, natural 0, sharp 1 and double sharp 2.
-type Accidental = Int 
+data Accidental = DoubleFlat | Flat | Natural | Sharp | DoubleSharp 
+    deriving (Eq, Ord, Show, Enum)
 
 -- | Number of octaves raised (positive) or flattened (negative).
 type Octaves    = Int 

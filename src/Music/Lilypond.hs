@@ -1,11 +1,11 @@
-
 {-# LANGUAGE 
-    OverloadedStrings, 
-    GeneralizedNewtypeDeriving,
-    StandaloneDeriving,
-    TypeFamilies,
-    ScopedTypeVariables,     
-    ExistentialQuantification #-}
+      OverloadedStrings
+    , GeneralizedNewtypeDeriving
+    , StandaloneDeriving
+    , TypeFamilies
+    , ScopedTypeVariables
+    , ExistentialQuantification 
+    , NoMonomorphismRestriction #-}
 
 -------------------------------------------------------------------------------------
 -- |
@@ -50,6 +50,7 @@ module Music.Lilypond (
         -- ** Pitch
         Pitch(..),
         PitchClass(..),
+        WhiteKey(..),
         Accidental(..),
         Octaves(..),
 
@@ -131,6 +132,7 @@ module Music.Lilypond (
     )
 where
 
+import Numeric.Natural
 import Data.Ratio
 import Data.String
 import Data.Default
@@ -186,8 +188,8 @@ data Music
     | Transpose Pitch Pitch Music                   -- ^ Transpose music (from to).
     | Relative Pitch Music                          -- ^ Use relative octave (octave).
     | Clef Clef                                     -- ^ Clef.
-    | Key Pitch Mode                                -- ^ Key signature.
-    | Time Rational                                 -- ^ Time signature.
+    | Key PitchClass Mode                           -- ^ Key signature.
+    | Time Natural Natural                          -- ^ Time signature.
     | Breathe (Maybe BreathingSign)                 -- ^ Breath mark (caesura)
     | Tempo (Maybe String) (Maybe (Duration,Integer)) -- ^ Tempo mark.
     | New String (Maybe String) Music               -- ^ New expression.
@@ -231,9 +233,9 @@ instance Pretty Music where
 
     pretty (Clef c) = "\\clef" <+> pretty c
 
-    pretty (Key p m) = "\\clef" <+> pretty p <+> pretty m
+    pretty (Key p m) = "\\key" <+> pretty p <+> pretty m
     
-    pretty (Time n) = "\\time" <+> pretty n
+    pretty (Time b q) = "\\time" <+> (pretty b <> "/" <> pretty q) -- otherwise 4%4 -> 1%1
     
     pretty (Breathe Nothing) = "\\breathe"
     pretty (Breathe a)       = notImpl "Non-standard breath marks"
@@ -258,6 +260,9 @@ instance Pretty Music where
     -- pretty _                        = notImpl "Unknown music expression"
 
     prettyList                      = hsep . fmap pretty
+
+instance Pretty Natural where
+    pretty = string . show
 
 instance IsPitch Music where
     fromPitch = (\p -> Note p (Just (1/4)) []) . fromPitch
