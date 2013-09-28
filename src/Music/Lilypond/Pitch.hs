@@ -28,7 +28,7 @@ import Text.Pretty hiding (Mode)
 import Music.Pitch.Literal
 
 data WhiteKey = C | D | E | F | G | A | B
-    deriving (Eq, Ord, Show, Enum)
+    deriving (Eq, Ord, Show, Enum, Read, Bounded)
 
 newtype Pitch = Pitch { getPitch :: (PitchClass, Octaves) }
     deriving (Eq, Ord, Show)
