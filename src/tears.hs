@@ -1,12 +1,8 @@
 {-# LANGUAGE 
-     StandaloneDeriving
-   , GeneralizedNewtypeDeriving 
-   , NoMonomorphismRestriction #-}
+   NoMonomorphismRestriction #-}
 
-{-
-import Music.Lilypond
+import Music.Lilypond hiding (Rest, rest)
 import Music.Lilypond.IO
--}
 import Music.Lilypond.Pitch
 import Data.AdditiveGroup
 
@@ -27,17 +23,6 @@ import Data.Maybe
 import Control.Applicative hiding (many, (<|>))
 import Control.Arrow
 
-newtype Duration   = Duration { getDuration :: Rational }
-deriving instance Eq            Duration
-deriving instance Ord           Duration
-deriving instance Num           Duration
-deriving instance Enum          Duration
-deriving instance Fractional    Duration
-deriving instance Real          Duration
-deriving instance RealFrac      Duration
-deriving instance Show          Duration
-deriving instance Read          Duration
-
 main = do
   s <- parseFromFile transcript $ f ++ ".dt" -- dt = 'degreeTranscript format?'
   putStrLn $ show s
@@ -51,13 +36,16 @@ main = do
             ]
     f = "tears"
 
-data Transcription = Transcription TranscriptionKey TranscriptionTime TranscriptionStart TranscriptionPattern [TranscriptionSection]
+data Transcription = Transcription TranscriptionTitle TranscriptionComposer TranscriptionYear TranscriptionKey TranscriptionTime TranscriptionStart TranscriptionPattern [TranscriptionSection]
   deriving (Eq,Show)
 data TranscriptionKey = TranscriptionKey PitchClass Mode
   deriving (Eq,Show)
 type TranscriptionTime = Natural
 type TranscriptionStart = Ratio Natural
 type TranscriptionPattern = String
+type TranscriptionTitle = String
+type TranscriptionComposer = String
+type TranscriptionYear = String
 data TranscriptionSection = TranscriptionSection Char [DegreeNote]
   deriving (Eq,Show)
 data DegreeNote = DegreeNote Accidental Degree Duration | Rest Duration
@@ -78,8 +66,10 @@ naturalOrFloat = P.naturalOrFloat lexxer
 tryChoice :: [Parser a] -> Parser a
 tryChoice = choice . (try <$>)
 
+line = manyTill anyChar newline
+
 transcript :: Parser Transcription
-transcript = Transcription <$> key <*> time <*> start <*> pattern <*> many section <* (whiteSpace >> eof)
+transcript = Transcription <$> line <*> line <*> line <*> key <*> time <*> start <*> pattern <*> many section <* (whiteSpace >> eof)
 
 pitchClass :: Parser PitchClass
 pitchClass = whiteSpace >> PitchClass <$> whiteKey <*> accidental

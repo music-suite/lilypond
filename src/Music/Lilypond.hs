@@ -534,7 +534,6 @@ instance Pretty Direction where
 
 -- | Notated time in fractions, in @[2^^i | i <- [-10..3]]@.
 newtype Duration   = Duration { getDuration :: Rational }
-
 deriving instance Eq            Duration
 deriving instance Ord           Duration
 deriving instance Num           Duration
@@ -543,6 +542,7 @@ deriving instance Fractional    Duration
 deriving instance Real          Duration
 deriving instance RealFrac      Duration
 deriving instance Show          Duration
+deriving instance Read          Duration
 
 instance Pretty Duration where
     pretty a = string $ pnv (toRational nv) ++ pds ds
