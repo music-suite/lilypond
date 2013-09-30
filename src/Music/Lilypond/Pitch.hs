@@ -27,7 +27,7 @@ import Data.Char
 import Text.Pretty hiding (Mode)
 import Music.Pitch.Literal
 
-data WhiteKey = C | D | E | F | G | A | B
+data WhiteKey = C | D | E | F | G | A | B -- don't change this order!  our transposing depends on it.
     deriving (Eq, Ord, Show, Enum, Read, Bounded)
 
 newtype Pitch = Pitch { getPitch :: (PitchClass, Octaves) }
@@ -59,8 +59,8 @@ instance IsPitch Pitch where
     fromPitch (PitchL (c, Nothing, o)) = Pitch (PitchClass (toEnum c) Natural           , o)                 
     fromPitch (PitchL (c, Just a, o))  = Pitch (PitchClass (toEnum c) (toEnum $ round a), o)
 
-data Accidental = DoubleFlat | Flat | Natural | Sharp | DoubleSharp 
-    deriving (Eq, Ord, Show, Enum)
+data Accidental = DoubleFlat | Flat | Natural | Sharp | DoubleSharp  -- don't change this order!  our transposing depends on it.
+    deriving (Eq, Ord, Show, Enum, Bounded)
 
 -- | Number of octaves raised (positive) or flattened (negative).
 type Octaves    = Int 

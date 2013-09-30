@@ -1,7 +1,8 @@
 {-# LANGUAGE 
    NoMonomorphismRestriction #-}
 
-import Music.Lilypond hiding (Rest, rest)
+import qualified Music.Lilypond as L
+import Music.Lilypond hiding (Rest, rest, Time, Key)
 import Music.Lilypond.IO
 import Music.Lilypond.Pitch
 import Data.AdditiveGroup
@@ -23,31 +24,68 @@ import Data.Maybe
 import Control.Applicative hiding (many, (<|>))
 import Control.Arrow
 
-main = do
-  s <- parseFromFile transcript $ f ++ ".dt" -- dt = 'degreeTranscript format?'
-  putStrLn $ show s
-  writeMusic f m
-  where 
-    m =     Clef Treble
-        ^+^ Time 3 4
-        ^+^ Key (PitchClass A Flat) Minor
-        ^+^ Sequential [
-              Note (NotePitch (Pitch (PitchClass A Sharp, 4)) Nothing {-(Just OctaveCheck)-}) (Just $ 3/4) []
-            ]
-    f = "tears"
+main = either print (writeMusic f . lily) =<< (parseFromFile transcript $ f ++ ".dt") -- dt = 'degreeTranscript format?'
+  where f = "tears"
 
-data Transcription = Transcription TranscriptionTitle TranscriptionComposer TranscriptionYear TranscriptionKey TranscriptionTime TranscriptionStart TranscriptionPattern [TranscriptionSection]
-  deriving (Eq,Show)
-data TranscriptionKey = TranscriptionKey PitchClass Mode
-  deriving (Eq,Show)
-type TranscriptionTime = Natural
-type TranscriptionStart = Ratio Natural
-type TranscriptionPattern = String
-type TranscriptionTitle = String
-type TranscriptionComposer = String
-type TranscriptionYear = String
-data TranscriptionSection = TranscriptionSection Char [DegreeNote]
-  deriving (Eq,Show)
+lily s =    Clef Treble
+        ^+^ L.Time (time s) 4
+        ^+^ L.Key (transpose (key s) outKey First Natural) (mode $ key s)
+        ^+^ (sumV $ (lily' (key s) outKey) <$> sections s)
+   where outKey = PitchClass C Natural
+
+-- section
+lily' inKM outK s = Sequential [sumV $ (lily'' inKM outK) <$> notes s]
+
+-- note
+lily'' _    _    (Rest dur)           = L.Rest                                      (Just dur) []
+lily'' inKM outK (DegreeNote a d dur) = Note (NotePitch (Pitch (pc', oct)) Nothing) (Just dur) []
+        where pc' = transpose inKM outK d a
+              oct = 5
+
+transpose :: Key -> PitchClass -> Degree -> Accidental -> PitchClass
+transpose inKM outK d a = PitchClass (whiteKeys !! mod n (length whiteKeys)) a
+   where n = (get (white inK) whiteKeys) + (get d degrees) + diff (white outK) C
+         get d xs = fromJust . lookup d $ zip xs [0..]
+         white (PitchClass w _) = w
+         acc   (PitchClass _ a) = a
+
+diff d1 d2 = n d2 - n d1
+     where n = pos whiteKeys
+pos xs = fromJust . (flip lookup) (zip xs [1..])
+
+enum = [minBound .. maxBound]
+degrees = enum :: [Degree]
+whiteKeys = enum :: [WhiteKey]
+
+data Step = Whole | Half deriving Show
+major = [Whole, Whole, Half, Whole, Whole, Whole, Half]
+minor = modal 6 major
+modal n s = take (length s) $ drop (n-1) $ cycle s
+
+data Transcription = Transcription {
+        title    :: Title 
+      , composer :: Composer 
+      , year     :: Year 
+      , key      :: Key 
+      , time     :: Time 
+      , start    :: Start 
+      , pattern  :: Pattern 
+      , sections :: [Section]
+  } deriving (Eq,Show)
+data Key = Key { 
+        pc   :: PitchClass 
+      , mode :: Mode
+  } deriving (Eq,Show)
+type Time = Natural
+type Start = Ratio Natural
+type Pattern = String
+type Title = String
+type Composer = String
+type Year = String
+data Section = Section {
+        lable :: Char 
+      , notes :: [DegreeNote]
+  } deriving (Eq,Show)
 data DegreeNote = DegreeNote Accidental Degree Duration | Rest Duration
   deriving (Eq,Show)
 data Degree = First | Second | Third | Fourth | Fifth | Sixth | Seventh
@@ -69,57 +107,57 @@ tryChoice = choice . (try <$>)
 line = manyTill anyChar newline
 
 transcript :: Parser Transcription
-transcript = Transcription <$> line <*> line <*> line <*> key <*> time <*> start <*> pattern <*> many section <* (whiteSpace >> eof)
+transcript = Transcription <$> line <*> line <*> line <*> keyP <*> timeP <*> startP <*> patternP <*> many1 sectionP <* (whiteSpace >> eof)
 
-pitchClass :: Parser PitchClass
-pitchClass = whiteSpace >> PitchClass <$> whiteKey <*> accidental
+pitchClassP :: Parser PitchClass
+pitchClassP = whiteSpace >> PitchClass <$> whiteKeyP <*> accidentalP
 
-whiteKey :: Parser WhiteKey
-whiteKey' = read . pure . toUpper <$> tryChoice (char <$> ws ++ (toLower <$> ws)) -- <?> "WhiteKey"
+whiteKeyP :: Parser WhiteKey
+whiteKeyP' = read . pure . toUpper <$> tryChoice (char <$> ws ++ (toLower <$> ws)) -- <?> "WhiteKey"
   where ws = head . show <$> ([minBound .. maxBound]::[WhiteKey])
-whiteKey = tryChoice $ (enum <$> ([minBound .. maxBound]::[WhiteKey]))
+whiteKeyP = tryChoice $ (enum <$> whiteKeys)
         where enum s = s <$ (tryChoice $ char <$> [u, toLower u])
                where u = head $ show s
 
-mode :: Parser Mode
-mode = whiteSpace >> tryChoice [ string "min" $> Minor
-                               , string "maj" $> Major
-                               ] -- <?> "Mode"
+modeP :: Parser Mode
+modeP = whiteSpace >> tryChoice [ string "min" $> Minor
+                                , string "maj" $> Major
+                                ] -- <?> "Mode"
 
-key :: Parser TranscriptionKey
-key = whiteSpace >> TranscriptionKey <$> pitchClass <*> mode
+keyP :: Parser Key
+keyP = whiteSpace >> Key <$> pitchClassP <*> modeP
 
-time :: Parser TranscriptionTime
-time = whiteSpace >> natural
+timeP :: Parser Time
+timeP = whiteSpace >> natural
 
-start :: Parser TranscriptionStart
-start = frac
+startP :: Parser Start
+startP = frac
 
-pattern :: Parser TranscriptionPattern
-pattern = whiteSpace >> many1 letter
+patternP :: Parser Pattern
+patternP = whiteSpace >> many1 letter
 
-section :: Parser TranscriptionSection
-section = try $ TranscriptionSection <$> (whiteSpace >> letter) <*> (many $ tryChoice [degreeNote, rest])
+sectionP :: Parser Section
+sectionP = try $ Section <$> (whiteSpace >> letter) <*> (many1 $ tryChoice [degreeNoteP, restP])
 
--- factor out whiteSpace >> duration from rest/degreeNote?
-degreeNote,rest :: Parser DegreeNote
-degreeNote = DegreeNote <$> (whiteSpace >> accidental) <*> degree <*> (whiteSpace >> duration)
-rest = Rest <$> (whiteSpace >> char 'R' >> whiteSpace >> duration)
+-- factor out whiteSpace >> durationP from rest/degreeNote?
+degreeNoteP,restP :: Parser DegreeNote
+degreeNoteP = DegreeNote <$> (whiteSpace >> accidentalP) <*> degreeP <*> (whiteSpace >> durationP)
+restP = Rest <$> (whiteSpace >> char 'R' >> whiteSpace >> durationP)
 
-degree :: Parser Degree
-degree = fromJust . (flip M.lookup) m <$> (tryChoice $ string <$> M.keys m)
-  where m = M.fromList $ zip (show <$> [1..]) ([minBound .. maxBound] :: [Degree])
+degreeP :: Parser Degree
+degreeP = fromJust . (flip M.lookup) m <$> (tryChoice $ string <$> M.keys m)
+  where m = M.fromList $ zip (show <$> [1..]) degrees
 
-accidental :: Parser Accidental
-accidental = option Natural (tryChoice [
+accidentalP :: Parser Accidental
+accidentalP = option Natural (tryChoice [
     DoubleFlat  <$ string "bb" -- must try first!
   , Flat        <$ char   'b'
   , Sharp       <$ char   '#'
   , DoubleSharp <$ char   'x'
   ]) -- <?> "Accidental"
 
-duration :: Parser Duration
-duration = frac
+durationP :: Parser Duration
+durationP = (/ 4) <$> frac
 
 frac :: (Fractional a) => Parser a
 frac' = (fromRational . toRational ||| fromRational . toRational) <$> (whiteSpace >> naturalOrFloat)

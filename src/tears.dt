@@ -2,7 +2,7 @@ Flow, My Tears (Lachrimae pavane)
 John Dowland
 1596
                 -- first three lines for title, composer, year (no comments allowed)
-a min           -- key
+bb min          -- key
 
 8 		-- beats per measure
 1 		-- starting beat (1 = no pickup)
