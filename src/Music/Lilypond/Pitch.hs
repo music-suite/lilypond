@@ -1,5 +1,6 @@
 
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE 
+        OverloadedStrings #-}
 
 -------------------------------------------------------------------------------------
 -- |
@@ -34,7 +35,8 @@ newtype Pitch = Pitch { getPitch :: (PitchClass, Octaves) }
     deriving (Eq, Ord, Show)
 
 data PitchClass = PitchClass WhiteKey Accidental -- see wikipedia, pitch class includes accidental
-    deriving (Eq, Ord, Show) -- can't derive Enum even though isomorphic to (Enum,Enum)?
+    deriving (Eq, Ord, Show, Bounded {-, Enum-}) -- can't derive Enum even though isomorphic to (Enum,Enum)?
+-- deriving instance Enum PitchClass
 
 instance Pretty PitchClass where
     pretty (PitchClass w a) = string $ pc w ++ acc a

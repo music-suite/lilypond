@@ -31,7 +31,7 @@ lily s =    Clef Treble
         ^+^ L.Time (time s) 4
         ^+^ L.Key (transpose (key s) outKey First Natural) (mode $ key s)
         ^+^ (sumV $ (lily' (key s) outKey) <$> sections s)
-   where outKey = PitchClass C Natural
+   where outKey = PitchClass F Natural
 
 -- section
 lily' inKM outK s = Sequential [sumV $ (lily'' inKM outK) <$> notes s]
@@ -43,16 +43,20 @@ lily'' inKM outK (DegreeNote a d dur) = Note (NotePitch (Pitch (pc', oct)) Nothi
               oct = 5
 
 transpose :: Key -> PitchClass -> Degree -> Accidental -> PitchClass
-transpose inKM outK d a = PitchClass (whiteKeys !! mod n (length whiteKeys)) a
-   where n = (get (white inK) whiteKeys) + (get d degrees) + diff (white outK) C
-         get d xs = fromJust . lookup d $ zip xs [0..]
-         white (PitchClass w _) = w
-         acc   (PitchClass _ a) = a
+transpose (Key inK m) outK d a = tone (Key (step (head $ steps outK inK) (PitchClass C Natural)) m) a d
 
-diff d1 d2 = n d2 - n d1
-     where n = pos whiteKeys
-pos xs = fromJust . (flip lookup) (zip xs [1..])
+step (0,0) = id
+step (0,h) = step (0,h-1) . inc Half
+step (w,h) = step (w-1,h) . inc Whole
 
+-- poor strategy, how fix?
+steps k1 k2 = filter (\x -> step x k1 == k2) [(w,h) | w <- [0..5], h <- [0..2]]
+
+diff d1 d2 = pos d2 - pos d1
+pos = fromJust . (flip lookup) (zip enum [0..])
+get xs = (xs !!) . (flip mod) (length xs)
+
+enum :: (Enum a, Bounded a) => [a]
 enum = [minBound .. maxBound]
 degrees = enum :: [Degree]
 whiteKeys = enum :: [WhiteKey]
@@ -61,6 +65,25 @@ data Step = Whole | Half deriving Show
 major = [Whole, Whole, Half, Whole, Whole, Whole, Half]
 minor = modal 6 major
 modal n s = take (length s) $ drop (n-1) $ cycle s
+
+scale k = tone k Natural <$> enum
+
+tone :: Key -> Accidental -> Degree -> PitchClass
+tone (Key pc m) acc d = getNote pc (pos d) acc $ 
+        case m of Major -> major
+                  Minor -> minor
+
+getNote :: PitchClass -> Int -> Accidental -> [Step] -> PitchClass
+getNote (PitchClass w a) 0 acc _         = PitchClass w $ enum !! ((pos a) + (diff Natural acc))
+getNote p                d acc (s:steps) = getNote (inc s p) (d - 1) acc steps
+
+inc s (PitchClass w a) = PitchClass w' a'
+        where w' = get enum $ (pos w) + 1
+              a' = fix s $ get major $ pos w
+              fix Half Whole = adj (-) a
+              fix Whole Half = adj (+) a
+              fix _     _    = a -- args are equal
+              adj op n = enum !! (op (pos n) 1) -- op can't be sectioned to pointfree this?
 
 data Transcription = Transcription {
         title    :: Title 
@@ -112,11 +135,11 @@ transcript = Transcription <$> line <*> line <*> line <*> keyP <*> timeP <*> sta
 pitchClassP :: Parser PitchClass
 pitchClassP = whiteSpace >> PitchClass <$> whiteKeyP <*> accidentalP
 
-whiteKeyP :: Parser WhiteKey
+whiteKeyP, whiteKeyP' :: Parser WhiteKey
 whiteKeyP' = read . pure . toUpper <$> tryChoice (char <$> ws ++ (toLower <$> ws)) -- <?> "WhiteKey"
-  where ws = head . show <$> ([minBound .. maxBound]::[WhiteKey])
-whiteKeyP = tryChoice $ (enum <$> whiteKeys)
-        where enum s = s <$ (tryChoice $ char <$> [u, toLower u])
+  where ws = head . show <$> whiteKeys
+whiteKeyP = tryChoice $ (enum' <$> enum)
+        where enum' s = s <$ (tryChoice $ char <$> [u, toLower u])
                where u = head $ show s
 
 modeP :: Parser Mode
@@ -139,10 +162,9 @@ patternP = whiteSpace >> many1 letter
 sectionP :: Parser Section
 sectionP = try $ Section <$> (whiteSpace >> letter) <*> (many1 $ tryChoice [degreeNoteP, restP])
 
--- factor out whiteSpace >> durationP from rest/degreeNote?
 degreeNoteP,restP :: Parser DegreeNote
-degreeNoteP = DegreeNote <$> (whiteSpace >> accidentalP) <*> degreeP <*> (whiteSpace >> durationP)
-restP = Rest <$> (whiteSpace >> char 'R' >> whiteSpace >> durationP)
+degreeNoteP = DegreeNote <$> (whiteSpace >> accidentalP) <*> degreeP <*> durationP
+restP = Rest <$> (whiteSpace >> char 'R' >> durationP)
 
 degreeP :: Parser Degree
 degreeP = fromJust . (flip M.lookup) m <$> (tryChoice $ string <$> M.keys m)
@@ -157,7 +179,7 @@ accidentalP = option Natural (tryChoice [
   ]) -- <?> "Accidental"
 
 durationP :: Parser Duration
-durationP = (/ 4) <$> frac
+durationP = (/ 4) <$> (whiteSpace >> frac)
 
 frac :: (Fractional a) => Parser a
 frac' = (fromRational . toRational ||| fromRational . toRational) <$> (whiteSpace >> naturalOrFloat)
