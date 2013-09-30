@@ -1,21 +1,47 @@
+{-# LANGUAGE 
+     StandaloneDeriving
+   , GeneralizedNewtypeDeriving 
+   , NoMonomorphismRestriction #-}
+
+{-
 import Music.Lilypond
 import Music.Lilypond.IO
+-}
+import Music.Lilypond.Pitch
 import Data.AdditiveGroup
+
 import Data.Ratio
 import Numeric.Natural hiding (natural)
+
 import Text.Parsec
---import Text.Parsec.ByteString.Lazy
+--import Text.Parsec.ByteString.Lazy -- haskellDef below seems to preclude this...
 import Text.Parsec.String
 import qualified Text.Parsec.Token as P
 import Text.Parsec.Language (haskellDef)
-import Control.Applicative hiding (many, (<|>))
+import Text.ParserCombinators.Parsec.Number -- cabal install parsec-numbers
+
 import Data.Char
+-- import Data.Word
+import qualified Data.Map as M
+import Data.Maybe
+import Control.Applicative hiding (many, (<|>))
+import Control.Arrow
+
+newtype Duration   = Duration { getDuration :: Rational }
+deriving instance Eq            Duration
+deriving instance Ord           Duration
+deriving instance Num           Duration
+deriving instance Enum          Duration
+deriving instance Fractional    Duration
+deriving instance Real          Duration
+deriving instance RealFrac      Duration
+deriving instance Show          Duration
+deriving instance Read          Duration
 
 main = do
-  putStrLn . show $ parse key "" "bbb maj {- hi -} 12"
-  s <- parseFromFile transcript "tears.dt"
+  s <- parseFromFile transcript $ f ++ ".dt" -- dt = 'degreeTranscript format?'
   putStrLn $ show s
-  writeMusic {-"/home/hiccup/Desktop/tearsOut"-} "tearsOut" m
+  writeMusic f m
   where 
     m =     Clef Treble
         ^+^ Time 3 4
@@ -23,6 +49,7 @@ main = do
         ^+^ Sequential [
               Note (NotePitch (Pitch (PitchClass A Sharp, 4)) Nothing {-(Just OctaveCheck)-}) (Just $ 3/4) []
             ]
+    f = "tears"
 
 data Transcription = Transcription TranscriptionKey TranscriptionTime TranscriptionStart TranscriptionPattern [TranscriptionSection]
   deriving (Eq,Show)
@@ -33,61 +60,65 @@ type TranscriptionStart = Ratio Natural
 type TranscriptionPattern = String
 data TranscriptionSection = TranscriptionSection Char [DegreeNote]
   deriving (Eq,Show)
-data DegreeNote = DegreeNote Degree Accidental Duration
+data DegreeNote = DegreeNote Accidental Degree Duration | Rest Duration
   deriving (Eq,Show)
 data Degree = First | Second | Third | Fourth | Fifth | Sixth | Seventh
   deriving (Eq,Show,Enum,Bounded)
 
-lexxer = P.makeTokenParser haskellDef
+lexxer = P.makeTokenParser haskellDef -- haskellDef seems to lock us into Strings, no ByteStrings/Text...
 whiteSpace = P.whiteSpace lexxer
-natural = toNatural . fromInteger <$> P.natural lexxer
+-- natural' = toNatural . (fromInteger :: Integer -> Word) <$> P.natural lexxer
+natural = fromIntegral <$> P.natural lexxer
+naturalOrFloat = P.naturalOrFloat lexxer
 
 -- a $> b = a >> return b
 ($>) = flip (<$)
+(<<) = flip (>>)
 
 tryChoice :: [Parser a] -> Parser a
-tryChoice = choice . map try
+tryChoice = choice . (try <$>)
 
 transcript :: Parser Transcription
-transcript = Transcription <$> key <*> time <*> start <*> pattern <*> many section
+transcript = Transcription <$> key <*> time <*> start <*> pattern <*> many section <* (whiteSpace >> eof)
 
 pitchClass :: Parser PitchClass
 pitchClass = whiteSpace >> PitchClass <$> whiteKey <*> accidental
 
-{-
 whiteKey :: Parser WhiteKey
-whiteKey = tryChoice $ map enum ([minBound .. maxBound]::[WhiteKey])
-        where enum s = s <$ string (map toLower $ show s)
--}
-
-whiteKey :: Parser WhiteKey
-whiteKey = read . pure . toUpper <$> anyChar <?> "WhiteKey"
+whiteKey' = read . pure . toUpper <$> tryChoice (char <$> ws ++ (toLower <$> ws)) -- <?> "WhiteKey"
+  where ws = head . show <$> ([minBound .. maxBound]::[WhiteKey])
+whiteKey = tryChoice $ (enum <$> ([minBound .. maxBound]::[WhiteKey]))
+        where enum s = s <$ (tryChoice $ char <$> [u, toLower u])
+               where u = head $ show s
 
 mode :: Parser Mode
 mode = whiteSpace >> tryChoice [ string "min" $> Minor
                                , string "maj" $> Major
-                               ] <?> "Mode"
+                               ] -- <?> "Mode"
 
 key :: Parser TranscriptionKey
 key = whiteSpace >> TranscriptionKey <$> pitchClass <*> mode
 
 time :: Parser TranscriptionTime
-time = natural
+time = whiteSpace >> natural
 
 start :: Parser TranscriptionStart
-start = undefined
+start = frac
 
 pattern :: Parser TranscriptionPattern
-pattern = undefined
+pattern = whiteSpace >> many1 letter
 
 section :: Parser TranscriptionSection
-section = undefined
+section = try $ TranscriptionSection <$> (whiteSpace >> letter) <*> (many $ tryChoice [degreeNote, rest])
 
-degreeNote :: Parser DegreeNote
-degreeNote = undefined
+-- factor out whiteSpace >> duration from rest/degreeNote?
+degreeNote,rest :: Parser DegreeNote
+degreeNote = DegreeNote <$> (whiteSpace >> accidental) <*> degree <*> (whiteSpace >> duration)
+rest = Rest <$> (whiteSpace >> char 'R' >> whiteSpace >> duration)
 
 degree :: Parser Degree
-degree = undefined
+degree = fromJust . (flip M.lookup) m <$> (tryChoice $ string <$> M.keys m)
+  where m = M.fromList $ zip (show <$> [1..]) ([minBound .. maxBound] :: [Degree])
 
 accidental :: Parser Accidental
 accidental = option Natural (tryChoice [
@@ -95,7 +126,11 @@ accidental = option Natural (tryChoice [
   , Flat        <$ char   'b'
   , Sharp       <$ char   '#'
   , DoubleSharp <$ char   'x'
-  ]) <?> "Accidental"
+  ]) -- <?> "Accidental"
 
 duration :: Parser Duration
-duration = undefined
+duration = frac
+
+frac :: (Fractional a) => Parser a
+frac' = (fromRational . toRational ||| fromRational . toRational) <$> (whiteSpace >> naturalOrFloat)
+frac = fromRational . toRational <$> (whiteSpace >> floating3 False)
