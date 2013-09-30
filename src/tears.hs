@@ -24,17 +24,17 @@ import Data.Maybe
 import Control.Applicative hiding (many, (<|>))
 import Control.Arrow
 
-main = either print (writeMusic f . lily) =<< (parseFromFile transcript $ f ++ ".dt") -- dt = 'degreeTranscript format?'
+main = either print (writeMusic f . lily) =<< parseFromFile transcript (f ++ ".dt") -- dt = 'degreeTranscript format?'
   where f = "tears"
 
 lily s =    Clef Treble
         ^+^ L.Time (time s) 4
         ^+^ L.Key (transpose (key s) outKey First Natural) (mode $ key s)
-        ^+^ (sumV $ (lily' (key s) outKey) <$> sections s)
+        ^+^ sumV (lily' (key s) outKey <$> sections s)
    where outKey = PitchClass F Natural
 
 -- section
-lily' inKM outK s = Sequential [sumV $ (lily'' inKM outK) <$> notes s]
+lily' inKM outK s = Sequential [sumV $ lily'' inKM outK <$> notes s]
 
 -- note
 lily'' _    _    (Rest dur)           = L.Rest                                      (Just dur) []
@@ -53,8 +53,8 @@ step (w,h) = step (w-1,h) . inc Whole
 steps k1 k2 = filter (\x -> step x k1 == k2) [(w,h) | w <- [0..5], h <- [0..2]]
 
 diff d1 d2 = pos d2 - pos d1
-pos = fromJust . (flip lookup) (zip enum [0..])
-get xs = (xs !!) . (flip mod) (length xs)
+pos = fromJust . flip lookup (zip enum [0..])
+get xs = (xs !!) . flip mod (length xs)
 
 enum :: (Enum a, Bounded a) => [a]
 enum = [minBound .. maxBound]
@@ -74,7 +74,7 @@ tone (Key pc m) acc d = getNote pc (pos d) acc $
                   Minor -> minor
 
 getNote :: PitchClass -> Int -> Accidental -> [Step] -> PitchClass
-getNote (PitchClass w a) 0 acc _         = PitchClass w $ enum !! ((pos a) + (diff Natural acc))
+getNote (PitchClass w a) 0 acc _         = PitchClass w $ enum !! ((pos a) + diff Natural acc)
 getNote p                d acc (s:steps) = getNote (inc s p) (d - 1) acc steps
 
 inc s (PitchClass w a) = PitchClass w' a'
@@ -83,7 +83,7 @@ inc s (PitchClass w a) = PitchClass w' a'
               fix Half Whole = adj (-) a
               fix Whole Half = adj (+) a
               fix _     _    = a -- args are equal
-              adj op n = enum !! (op (pos n) 1) -- op can't be sectioned to pointfree this?
+              adj op n = enum !! op (pos n) 1 -- op can't be sectioned to pointfree this?
 
 data Transcription = Transcription {
         title    :: Title 
@@ -138,8 +138,8 @@ pitchClassP = whiteSpace >> PitchClass <$> whiteKeyP <*> accidentalP
 whiteKeyP, whiteKeyP' :: Parser WhiteKey
 whiteKeyP' = read . pure . toUpper <$> tryChoice (char <$> ws ++ (toLower <$> ws)) -- <?> "WhiteKey"
   where ws = head . show <$> whiteKeys
-whiteKeyP = tryChoice $ (enum' <$> enum)
-        where enum' s = s <$ (tryChoice $ char <$> [u, toLower u])
+whiteKeyP = tryChoice (enum' <$> enum)
+        where enum' s = s <$ tryChoice (char <$> [u, toLower u])
                where u = head $ show s
 
 modeP :: Parser Mode
@@ -160,14 +160,14 @@ patternP :: Parser Pattern
 patternP = whiteSpace >> many1 letter
 
 sectionP :: Parser Section
-sectionP = try $ Section <$> (whiteSpace >> letter) <*> (many1 $ tryChoice [degreeNoteP, restP])
+sectionP = try $ Section <$> (whiteSpace >> letter) <*> many1 (tryChoice [degreeNoteP, restP])
 
 degreeNoteP,restP :: Parser DegreeNote
 degreeNoteP = DegreeNote <$> (whiteSpace >> accidentalP) <*> degreeP <*> durationP
 restP = Rest <$> (whiteSpace >> char 'R' >> durationP)
 
 degreeP :: Parser Degree
-degreeP = fromJust . (flip M.lookup) m <$> (tryChoice $ string <$> M.keys m)
+degreeP = fromJust . flip M.lookup m <$> tryChoice (string <$> M.keys m)
   where m = M.fromList $ zip (show <$> [1..]) degrees
 
 accidentalP :: Parser Accidental

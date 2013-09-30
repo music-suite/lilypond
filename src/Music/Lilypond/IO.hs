@@ -1,5 +1,5 @@
 
-{-# LANGUAGE OverloadedStrings, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Music.Lilypond.IO -- (
   -- )
@@ -15,13 +15,13 @@ import Control.Monad
 writeMusic :: FilePath -> Music -> IO ()
 writeMusic path m = do
     v <- readProcess exe ["-v"] ""
-    let s = "\\version \"" ++ (last . words . head . lines) v ++ "\" " ++ (show $ pretty m)      
+    let s = "\\version \"" ++ (last . words . head . lines) v ++ "\" " ++ show (pretty m)      
 --  putStrLn s
     (Just h_in, _,  _, p) <- createProcess (proc exe ["-o" ++ path, "-"]){ std_in = CreatePipe }
     hSetBinaryMode h_in False
     hPutStr h_in s
     hClose h_in
-    putStrLn . show =<< waitForProcess p
+    print =<< waitForProcess p
     void $ rawSystem "xdg-open" [path ++ ".pdf"]
   where exe = "lilypond"
 
