@@ -12,11 +12,12 @@ import System.IO
 import Text.Pretty
 import Control.Monad
 
-writeMusic :: FilePath -> Music -> IO ()
-writeMusic path m = do
+-- writeMusic :: FilePath -> Music -> IO ()
+writeMusic path (m,ex) = do
     v <- readProcess exe ["-v"] ""
-    let s = "\\version \"" ++ (last . words . head . lines) v ++ "\" " ++ show (pretty m)      
+    let s = "\\version \"" ++ (last . words . head . lines) v ++ "\" " ++ ex ++ show (pretty m)      
 --  putStrLn s
+    writeFile (path ++ ".ly") s
     (Just h_in, _,  _, p) <- createProcess (proc exe ["-o" ++ path, "-"]){ std_in = CreatePipe }
     hSetBinaryMode h_in False
     hPutStr h_in s

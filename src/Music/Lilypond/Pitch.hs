@@ -31,7 +31,7 @@ import Music.Pitch.Literal
 data WhiteKey = C | D | E | F | G | A | B -- don't change this order!  our transposing depends on it.
     deriving (Eq, Ord, Show, Enum, Read, Bounded)
 
-newtype Pitch = Pitch { getPitch :: (PitchClass, Octaves) }
+newtype Pitch = Pitch { getPitch :: (PitchClass, Maybe Octaves) }
     deriving (Eq, Ord, Show)
 
 data PitchClass = PitchClass WhiteKey Accidental -- see wikipedia, pitch class includes accidental
@@ -51,15 +51,15 @@ instance Pretty PitchClass where
             acc DoubleSharp = "isis"
 
 instance Pretty Pitch where
-    pretty (Pitch (c,o)) = pretty c <+> (string $ oct (o-4))
+    pretty (Pitch (c,o)) = pretty c <+> maybe "" (\x -> (string $ oct x)) o
         where
             oct n | n <  0  =  concat $ replicate (negate n) ","
                   | n == 0  =  ""
                   | n >  0  =  concat $ replicate n "'"
 
 instance IsPitch Pitch where
-    fromPitch (PitchL (c, Nothing, o)) = Pitch (PitchClass (toEnum c) Natural           , o)                 
-    fromPitch (PitchL (c, Just a, o))  = Pitch (PitchClass (toEnum c) (toEnum $ round a), o)
+    fromPitch (PitchL (c, Nothing, o)) = Pitch (PitchClass (toEnum c) Natural           , Just o)                 
+    fromPitch (PitchL (c, Just a, o))  = Pitch (PitchClass (toEnum c) (toEnum $ round a), Just o)
 
 data Accidental = DoubleFlat | Flat | Natural | Sharp | DoubleSharp  -- don't change this order!  our transposing depends on it.
     deriving (Eq, Ord, Show, Enum, Bounded)

@@ -268,7 +268,7 @@ instance IsPitch Music where
     fromPitch = (\p -> Note p (Just (1/4)) []) . fromPitch
 
 instance AdditiveGroup Music where
-    zeroV   = Rest (Just $ 1/4) []
+    zeroV   = Sequential [] -- Rest (Just $ 1/4) []
     a ^+^ b = Sequential [a,b]
     negateV = error "No Music.Lilypond.Music.negateV"
 

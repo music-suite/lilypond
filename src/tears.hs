@@ -7,9 +7,6 @@ import Music.Lilypond.IO
 import Music.Lilypond.Pitch
 import Data.AdditiveGroup
 
-import Data.Ratio
-import Numeric.Natural hiding (natural)
-
 import Text.Parsec
 --import Text.Parsec.ByteString.Lazy -- haskellDef below seems to preclude this...
 import Text.Parsec.String
@@ -17,6 +14,9 @@ import qualified Text.Parsec.Token as P
 import Text.Parsec.Language (haskellDef)
 import Text.ParserCombinators.Parsec.Number -- cabal install parsec-numbers
 
+import Data.Ratio
+import Numeric.Natural hiding (natural)
+import Data.Fixed
 import Data.Char
 -- import Data.Word
 import qualified Data.Map as M
@@ -24,23 +24,41 @@ import Data.Maybe
 import Control.Applicative hiding (many, (<|>))
 import Control.Arrow
 
-main = either print (writeMusic f . lily) =<< parseFromFile transcript (f ++ ".dt") -- dt = 'degreeTranscript format?'
+main = either print engrave =<< parseFromFile transcript (f ++ ".dt") -- dt = 'degreeTranscript format?'
   where f = "tears"
+        engrave = writeMusic f . lily
+        debug = writeFile (f ++ ".debug") . show
 
-lily s =    Clef Treble
-        ^+^ L.Time (time s) 4
-        ^+^ L.Key (transpose (key s) outKey First Natural) (mode $ key s)
-        ^+^ sumV (lily' (key s) outKey <$> sections s)
-   where outKey = PitchClass F Natural
+-- lily :: Transcription -> Music
+lily s = (m,ex)
+  where m =     Clef Treble
+            ^+^ L.Time (time s) 4
+            ^+^ L.Key (transpose (key s) outKey First Natural) (mode $ key s)
+            ^+^ (Relative (Pitch (PitchClass C Natural, Just 2)) $ sumV (lily' (time s) (key s) outKey <$> sections s))
+        ex = " \\header { title = " ++ (show $ title s) ++ " composer = " ++ (show $ composer s) ++ " instrument = \"alto recorder in F\"" ++ "}"
+        outKey = PitchClass C {-F-} Natural
 
--- section
-lily' inKM outK s = Sequential [sumV $ lily'' inKM outK <$> notes s]
+lily' :: Time -> Key -> PitchClass -> Section -> Music
+lily' t inKM outK s = Sequential [sumV $ lily'' inKM outK <$> (bars (Duration $ (fromIntegral t) / 4) $ notes s)]
 
--- note
-lily'' _    _    (Rest dur)           = L.Rest                                      (Just dur) []
-lily'' inKM outK (DegreeNote a d dur) = Note (NotePitch (Pitch (pc', oct)) Nothing) (Just dur) []
+-- bars :: Time -> [DegreeNote] -> [DegreeNote]
+bars t ns = bars' t 0 ns []
+bars' _ _  []     out = reverse out
+bars' t t' (n:ns) out = bars' t t'' ns' $ this : out
+        where (t'', this, ns') = if now <= t 
+                then (mod' now t, n    ,          ns) 
+                else (0         , first, second : ns)
+              now  = t' + dur n
+              (first,second) = splitDur (t - t') n
+              splitDur d (DegreeNote a g o d' _) = (DegreeNote a g o d True, DegreeNote a g Nothing (d' - d) False)
+              splitDur d (Rest             d'  ) = (Rest             d     , Rest                  $ d' - d       )
+              dur (DegreeNote _ _ _ d _) = d
+              dur (Rest d) = d
+
+lily'' :: Key -> PitchClass -> DegreeNote -> Music
+lily'' _    _    (Rest dur)             = L.Rest                                      (Just dur) []
+lily'' inKM outK (DegreeNote a d o dur t) = Note (NotePitch (Pitch (pc', o)) Nothing) (Just dur) $ if t then [Tie] else []
         where pc' = transpose inKM outK d a
-              oct = 5
 
 transpose :: Key -> PitchClass -> Degree -> Accidental -> PitchClass
 transpose (Key inK m) outK d a = tone (Key (step (head $ steps outK inK) (PitchClass C Natural)) m) a d
@@ -106,13 +124,17 @@ type Title = String
 type Composer = String
 type Year = String
 data Section = Section {
-        lable :: Char 
+        label :: Char 
       , notes :: [DegreeNote]
-  } deriving (Eq,Show)
-data DegreeNote = DegreeNote Accidental Degree Duration | Rest Duration
+  } deriving (Eq)
+instance Show Section 
+  where show (Section l n) = "\nlabel: " ++ pure l ++ "\n" ++ (unlines $ show <$> n)
+data DegreeNote = DegreeNote Accidental Degree Octave Duration Tie | Rest Duration
   deriving (Eq,Show)
 data Degree = First | Second | Third | Fourth | Fifth | Sixth | Seventh
   deriving (Eq,Show,Enum,Bounded)
+type Octave = Maybe Int
+type Tie = Bool
 
 lexxer = P.makeTokenParser haskellDef -- haskellDef seems to lock us into Strings, no ByteStrings/Text...
 whiteSpace = P.whiteSpace lexxer
@@ -163,7 +185,7 @@ sectionP :: Parser Section
 sectionP = try $ Section <$> (whiteSpace >> letter) <*> many1 (tryChoice [degreeNoteP, restP])
 
 degreeNoteP,restP :: Parser DegreeNote
-degreeNoteP = DegreeNote <$> (whiteSpace >> accidentalP) <*> degreeP <*> durationP
+degreeNoteP = DegreeNote <$> (whiteSpace >> accidentalP) <*> degreeP <*> octaveP <*> durationP <*> pure False
 restP = Rest <$> (whiteSpace >> char 'R' >> durationP)
 
 degreeP :: Parser Degree
@@ -171,12 +193,20 @@ degreeP = fromJust . flip M.lookup m <$> tryChoice (string <$> M.keys m)
   where m = M.fromList $ zip (show <$> [1..]) degrees
 
 accidentalP :: Parser Accidental
-accidentalP = option Natural (tryChoice [
+accidentalP = option Natural $ tryChoice [
     DoubleFlat  <$ string "bb" -- must try first!
   , Flat        <$ char   'b'
   , Sharp       <$ char   '#'
   , DoubleSharp <$ char   'x'
-  ]) -- <?> "Accidental"
+  ] -- <?> "Accidental"
+
+octaveP :: Parser Octave
+octaveP = optionMaybe $ tryChoice [ 
+               countChar '+'
+  , negate <$> countChar '-'
+  ]
+
+countChar = (length <$>) . many1 . char
 
 durationP :: Parser Duration
 durationP = (/ 4) <$> (whiteSpace >> frac)
