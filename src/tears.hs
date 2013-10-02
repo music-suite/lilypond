@@ -1,6 +1,8 @@
 {-# LANGUAGE 
    NoMonomorphismRestriction #-}
 
+-- remove unix dependency in music-dynamics-literal
+
 import qualified Music.Lilypond as L
 import Music.Lilypond hiding (Rest, rest, Time, Key)
 import Music.Lilypond.IO
@@ -18,6 +20,7 @@ import Data.Ratio
 import Numeric.Natural hiding (natural)
 import Data.Fixed
 import Data.Char
+import Data.List hiding (transpose)
 -- import Data.Word
 import qualified Data.Map as M
 import Data.Maybe
@@ -29,19 +32,19 @@ main = either print engrave =<< parseFromFile transcript (f ++ ".dt") -- dt = 'd
         engrave = writeMusic f . lily
         debug = writeFile (f ++ ".debug") . show
 
--- lily :: Transcription -> Music
+lily :: Transcription -> (Music,String)
 lily s = (m,ex)
   where m =     Clef Treble
             ^+^ L.Time (time s) 4
             ^+^ L.Key (transpose (key s) outKey First Natural) (mode $ key s)
-            ^+^ (Relative (Pitch (PitchClass C Natural, Just 2)) $ sumV (lily' (time s) (key s) outKey <$> sections s))
-        ex = " \\header { title = " ++ (show $ title s) ++ " composer = " ++ (show $ composer s) ++ " instrument = \"alto recorder in F\"" ++ "}"
+            ^+^ Relative (Pitch (PitchClass C Natural, Just 2)) (sumV (lily' (time s) (key s) outKey <$> sections s))
+        ex = " \\header { title = " ++ show (title s) ++ " composer = " ++ show (composer s) ++ " instrument = \"alto recorder in F\"" ++ "}"
         outKey = PitchClass C {-F-} Natural
 
 lily' :: Time -> Key -> PitchClass -> Section -> Music
-lily' t inKM outK s = Sequential [sumV $ lily'' inKM outK <$> (bars (Duration $ (fromIntegral t) / 4) $ notes s)]
+lily' t inKM outK s = Sequential [sumV $ lily'' inKM outK <$> bars (Duration $ (fromIntegral t) / 4) (notes s)]
 
--- bars :: Time -> [DegreeNote] -> [DegreeNote]
+bars :: Duration -> [DegreeNote] -> [DegreeNote]
 bars t ns = bars' t 0 ns []
 bars' _ _  []     out = reverse out
 bars' t t' (n:ns) out = bars' t t'' ns' $ this : out
@@ -57,7 +60,7 @@ bars' t t' (n:ns) out = bars' t t'' ns' $ this : out
 
 lily'' :: Key -> PitchClass -> DegreeNote -> Music
 lily'' _    _    (Rest dur)             = L.Rest                                      (Just dur) []
-lily'' inKM outK (DegreeNote a d o dur t) = Note (NotePitch (Pitch (pc', o)) Nothing) (Just dur) $ if t then [Tie] else []
+lily'' inKM outK (DegreeNote a d o dur t) = Note (NotePitch (Pitch (pc', o)) Nothing) (Just dur) [Tie | t] -- silly hlint comprehension trick
         where pc' = transpose inKM outK d a
 
 transpose :: Key -> PitchClass -> Degree -> Accidental -> PitchClass
@@ -68,10 +71,10 @@ step (0,h) = step (0,h-1) . inc Half
 step (w,h) = step (w-1,h) . inc Whole
 
 -- poor strategy, how fix?
-steps k1 k2 = filter (\x -> step x k1 == k2) [(w,h) | w <- [0..5], h <- [0..2]]
+steps k1 k2 = filter ((k2 ==) . flip step k1) [(w,h) | w <- [0..5], h <- [0..2]]
 
 diff d1 d2 = pos d2 - pos d1
-pos = fromJust . flip lookup (zip enum [0..])
+pos = fromJust . flip elemIndex enum
 get xs = (xs !!) . flip mod (length xs)
 
 enum :: (Enum a, Bounded a) => [a]
@@ -97,7 +100,7 @@ getNote p                d acc (s:steps) = getNote (inc s p) (d - 1) acc steps
 
 inc s (PitchClass w a) = PitchClass w' a'
         where w' = get enum $ (pos w) + 1
-              a' = fix s $ get major $ pos w
+              a' = fix s $ get major $ pos w -- depends on WhiteKeys as [C .. B]
               fix Half Whole = adj (-) a
               fix Whole Half = adj (+) a
               fix _     _    = a -- args are equal
@@ -128,7 +131,7 @@ data Section = Section {
       , notes :: [DegreeNote]
   } deriving (Eq)
 instance Show Section 
-  where show (Section l n) = "\nlabel: " ++ pure l ++ "\n" ++ (unlines $ show <$> n)
+  where show (Section l n) = "\nlabel: " ++ pure l ++ "\n" ++ unlines (show <$> n)
 data DegreeNote = DegreeNote Accidental Degree Octave Duration Tie | Rest Duration
   deriving (Eq,Show)
 data Degree = First | Second | Third | Fourth | Fifth | Sixth | Seventh
