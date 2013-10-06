@@ -26,6 +26,7 @@ import qualified Data.Map as M
 import Data.Maybe
 import Control.Applicative hiding (many, (<|>))
 import Control.Arrow
+import Control.Monad
 
 main = either print engrave =<< parseFromFile transcript (f ++ ".dt") -- dt = 'degreeTranscript format?'
   where f = "tears"
@@ -38,11 +39,12 @@ lily s = (m,ex)
             ^+^ L.Time (time s) 4
             ^+^ L.Key (transpose (key s) outKey First Natural) (mode $ key s)
             ^+^ Relative (Pitch (PitchClass C Natural, Just 2)) (sumV (lily' (time s) (key s) outKey <$> sections s))
-        ex = " \\header { title = " ++ show (title s) ++ " composer = " ++ show (composer s) ++ " instrument = \"alto recorder in F\"" ++ "}"
-        outKey = PitchClass C {-F-} Natural
+        ex = " \\header { title = " ++ show (title s) ++ " composer = " ++ show (composer s) ++ " instrument = \"tenor recorder in C\"" ++ "}"
+        outKey = PitchClass F Natural
 
 lily' :: Time -> Key -> PitchClass -> Section -> Music
-lily' t inKM outK s = Sequential [sumV $ lily'' inKM outK <$> bars (Duration $ (fromIntegral t) / 4) (notes s)]
+-- lily' t inKM outK s = Sequential [sumV $ lily'' inKM outK <$> bars (Duration $ (fromIntegral t) / 4) (notes s)]
+lily' = undefined
 
 bars :: Duration -> [DegreeNote] -> [DegreeNote]
 bars t ns = bars' t 0 ns []
@@ -53,14 +55,14 @@ bars' t t' (n:ns) out = bars' t t'' ns' $ this : out
                 else (0         , first, second : ns)
               now  = t' + dur n
               (first,second) = splitDur (t - t') n
-              splitDur d (DegreeNote a g o d' _) = (DegreeNote a g o d True, DegreeNote a g Nothing (d' - d) False)
-              splitDur d (Rest             d'  ) = (Rest             d     , Rest                  $ d' - d       )
-              dur (DegreeNote _ _ _ d _) = d
-              dur (Rest d) = d
+              splitDur d (DegreeNote c a g o d' _) = (DegreeNote c a g o d True, DegreeNote c a g Nothing (d' - d) False)
+              splitDur d (Rest       c       d'  ) = (Rest       c       d     , Rest       c            $ d' - d       )
+              dur (DegreeNote _ _ _ _ d _) = d
+              dur (Rest _ d) = d
 
 lily'' :: Key -> PitchClass -> DegreeNote -> Music
-lily'' _    _    (Rest dur)             = L.Rest                                      (Just dur) []
-lily'' inKM outK (DegreeNote a d o dur t) = Note (NotePitch (Pitch (pc', o)) Nothing) (Just dur) [Tie | t] -- silly hlint comprehension trick
+lily'' _    _    (Rest _ dur)             = L.Rest                                      (Just dur) []
+lily'' inKM outK (DegreeNote _ a d o dur t) = Note (NotePitch (Pitch (pc', o)) Nothing) (Just dur) [Tie | t] -- silly hlint comprehension trick
         where pc' = transpose inKM outK d a
 
 transpose :: Key -> PitchClass -> Degree -> Accidental -> PitchClass
@@ -128,12 +130,15 @@ type Composer = String
 type Year = String
 data Section = Section {
         label :: Char 
-      , notes :: [DegreeNote]
+      , notes :: [[DegreeNote]]
   } deriving (Eq)
 instance Show Section 
   where show (Section l n) = "\nlabel: " ++ pure l ++ "\n" ++ unlines (show <$> n)
-data DegreeNote = DegreeNote Accidental Degree Octave Duration Tie | Rest Duration
-  deriving (Eq,Show)
+data DegreeNote = DegreeNote Column Accidental Degree Octave Duration Tie | Rest Column Duration
+  deriving (Eq)
+instance Show DegreeNote
+  where show (DegreeNote c a d o dur t) = show c
+        show (Rest c dur) = show c
 data Degree = First | Second | Third | Fourth | Fifth | Sixth | Seventh
   deriving (Eq,Show,Enum,Bounded)
 type Octave = Maybe Int
@@ -152,7 +157,7 @@ naturalOrFloat = P.naturalOrFloat lexxer
 tryChoice :: [Parser a] -> Parser a
 tryChoice = choice . (try <$>)
 
-line = manyTill anyChar newline
+line = manyTill anyChar newline -- (newline <|> (eof >> return '\n'))
 
 transcript :: Parser Transcription
 transcript = Transcription <$> line <*> line <*> line <*> keyP <*> timeP <*> startP <*> patternP <*> many1 sectionP <* (whiteSpace >> eof)
@@ -185,11 +190,26 @@ patternP :: Parser Pattern
 patternP = whiteSpace >> many1 letter
 
 sectionP :: Parser Section
-sectionP = try $ Section <$> (whiteSpace >> letter) <*> many1 (tryChoice [degreeNoteP, restP])
+sectionP = try $ Section <$> (whiteSpace >> letter <* whiteSpace) <*> (sepEndBy1 parts whiteSpace) <* eof
+
+parts :: Parser [DegreeNote]
+parts = do
+   col (== 1) "duration must fall at beginning of line in column 1"
+   d <- durationP
+   ns <- many1 $ tryChoice [degreeNoteP, restP]
+   return ns
 
 degreeNoteP,restP :: Parser DegreeNote
-degreeNoteP = DegreeNote <$> (whiteSpace >> accidentalP) <*> degreeP <*> octaveP <*> durationP <*> pure False
-restP = Rest <$> (whiteSpace >> char 'R' >> durationP)
+degreeNoteP = DegreeNote <$> (whiteSpace >> col (/= 1) err) <*> accidentalP <*> degreeP <*> octaveP <*> pure undefined <*> pure False
+restP = Rest <$> (whiteSpace >> col (/= 1) err) <*> (char 'R' >> pure undefined)
+
+err = "first item in line must be duration, not note"
+
+col f s = do 
+   c <- fromIntegral . sourceColumn <$> getPosition
+   if f c
+        then return c
+        else unexpected s
 
 degreeP :: Parser Degree
 degreeP = fromJust . flip M.lookup m <$> tryChoice (string <$> M.keys m)
@@ -212,8 +232,8 @@ octaveP = optionMaybe $ tryChoice [
 countChar = (length <$>) . many1 . char
 
 durationP :: Parser Duration
-durationP = (/ 4) <$> (whiteSpace >> frac)
+durationP = (/ 4) <$> frac
 
 frac :: (Fractional a) => Parser a
 frac' = (fromRational . toRational ||| fromRational . toRational) <$> (whiteSpace >> naturalOrFloat)
-frac = fromRational . toRational <$> (whiteSpace >> floating3 False)
+frac = fromRational . toRational <$> floating3 False
