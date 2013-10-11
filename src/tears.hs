@@ -28,7 +28,7 @@ import Control.Applicative hiding (many, (<|>))
 import Control.Arrow
 import Control.Monad
 
-main = either print engrave =<< parseFromFile transcript (f ++ ".dt") -- dt = 'degreeTranscript format?'
+main = either print debug =<< parseFromFile transcript (f ++ ".dt") -- dt = 'degreeTranscript format?'
   where f = "tears"
         engrave = writeMusic f . lily
         debug = writeFile (f ++ ".debug") . show
@@ -47,6 +47,8 @@ lily' :: Time -> Key -> PitchClass -> Section -> Music
 lily' = undefined
 
 bars :: Duration -> [DegreeNote] -> [DegreeNote]
+bars = undefined
+{-
 bars t ns = bars' t 0 ns []
 bars' _ _  []     out = reverse out
 bars' t t' (n:ns) out = bars' t t'' ns' $ this : out
@@ -64,6 +66,7 @@ lily'' :: Key -> PitchClass -> DegreeNote -> Music
 lily'' _    _    (Rest _ dur)             = L.Rest                                      (Just dur) []
 lily'' inKM outK (DegreeNote _ a d o dur t) = Note (NotePitch (Pitch (pc', o)) Nothing) (Just dur) [Tie | t] -- silly hlint comprehension trick
         where pc' = transpose inKM outK d a
+-}
 
 transpose :: Key -> PitchClass -> Degree -> Accidental -> PitchClass
 transpose (Key inK m) outK d a = tone (Key (step (head $ steps outK inK) (PitchClass C Natural)) m) a d
@@ -116,8 +119,14 @@ data Transcription = Transcription {
       , time     :: Time 
       , start    :: Start 
       , pattern  :: Pattern 
+      , voices   :: [Voice]
       , sections :: [Section]
   } deriving (Eq,Show)
+data Voice = Voice {
+    columnVoice :: Column
+  , instrument :: Instrument
+  } deriving (Eq,Show) 
+data Instrument = Instrument String PitchClass Octave deriving (Eq,Show)
 data Key = Key { 
         pc   :: PitchClass 
       , mode :: Mode
@@ -130,15 +139,17 @@ type Composer = String
 type Year = String
 data Section = Section {
         label :: Char 
-      , notes :: [[DegreeNote]]
+      , notes :: [[Element]]
   } deriving (Eq)
 instance Show Section 
   where show (Section l n) = "\nlabel: " ++ pure l ++ "\n" ++ unlines (show <$> n)
-data DegreeNote = DegreeNote Column Accidental Degree Octave Duration Tie | Rest Column Duration
-  deriving (Eq)
-instance Show DegreeNote
-  where show (DegreeNote c a d o dur t) = show c
-        show (Rest c dur) = show c
+data DegreeNote = DegreeNote Accidental Degree Octave Tie | Rest
+  deriving (Eq,Show)
+data Element = Element {
+    note     :: DegreeNote
+  , columnElement   :: Column
+  , duration :: Duration
+  } deriving (Eq,Show)
 data Degree = First | Second | Third | Fourth | Fifth | Sixth | Seventh
   deriving (Eq,Show,Enum,Bounded)
 type Octave = Maybe Int
@@ -160,7 +171,13 @@ tryChoice = choice . (try <$>)
 line = manyTill anyChar newline -- (newline <|> (eof >> return '\n'))
 
 transcript :: Parser Transcription
-transcript = Transcription <$> line <*> line <*> line <*> keyP <*> timeP <*> startP <*> patternP <*> many1 sectionP <* (whiteSpace >> eof)
+transcript = Transcription <$> line <*> line <*> line <*> keyP <*> timeP <*> startP <*> patternP <*> many1 voiceP <*> many1 sectionP <* (whiteSpace >> eof)
+
+voiceP :: Parser Voice
+voiceP = try $ whiteSpace >> Voice <$> col (/= 1) "voice spec can't be in column 1 (which is for durations)" <*> instrumentP
+
+instrumentP :: Parser Instrument
+instrumentP = Instrument <$> manyTill anyChar (try (string " in ")) <*> pitchClassP <*> octaveP
 
 pitchClassP :: Parser PitchClass
 pitchClassP = whiteSpace >> PitchClass <$> whiteKeyP <*> accidentalP
@@ -190,20 +207,19 @@ patternP :: Parser Pattern
 patternP = whiteSpace >> many1 letter
 
 sectionP :: Parser Section
-sectionP = try $ Section <$> (whiteSpace >> letter <* whiteSpace) <*> (sepEndBy1 parts whiteSpace) <* eof
+sectionP = try $ Section <$> (whiteSpace >> letter <* whiteSpace) <*> (sepEndBy1 parts whiteSpace)
 
-parts :: Parser [DegreeNote]
+parts :: Parser [Element]
 parts = do
    col (== 1) "duration must fall at beginning of line in column 1"
    d <- durationP
    ns <- many1 $ tryChoice [degreeNoteP, restP]
-   return ns
+   return $ (\(c,x) -> Element x c d) <$> ns
 
-degreeNoteP,restP :: Parser DegreeNote
-degreeNoteP = DegreeNote <$> (whiteSpace >> col (/= 1) err) <*> accidentalP <*> degreeP <*> octaveP <*> pure undefined <*> pure False
-restP = Rest <$> (whiteSpace >> col (/= 1) err) <*> (char 'R' >> pure undefined)
-
-err = "first item in line must be duration, not note"
+degreeNoteP,restP :: Parser (Column, DegreeNote)
+degreeNoteP =  w $ DegreeNote <$> accidentalP <*> degreeP <*> octaveP <*> pure False
+restP = w $ Rest <$ char 'R'
+w = ((,) <$> (whiteSpace >> col (/= 1) "first item in line must be duration, not note") <*>)
 
 col f s = do 
    c <- fromIntegral . sourceColumn <$> getPosition
