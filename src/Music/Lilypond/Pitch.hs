@@ -34,8 +34,12 @@ data WhiteKey = C | D | E | F | G | A | B -- don't change this order!  our trans
 newtype Pitch = Pitch { getPitch :: (PitchClass, Maybe Octaves) }
     deriving (Eq, Ord, Show)
 
+instance Show PitchClass where
+    show (PitchClass w a) = show w ++ case a of Natural   -> ""
+                                                otherwise -> " " ++ show a
+
 data PitchClass = PitchClass WhiteKey Accidental -- see wikipedia, pitch class includes accidental
-    deriving (Eq, Ord, Show, Bounded {-, Enum-}) -- can't derive Enum even though isomorphic to (Enum,Enum)?
+    deriving (Eq, Ord, Bounded {-, Enum-}) -- can't derive Enum even though isomorphic to (Enum,Enum)?
 -- deriving instance Enum PitchClass
 
 instance Pretty PitchClass where

@@ -1,5 +1,6 @@
 {-# LANGUAGE 
-   NoMonomorphismRestriction #-}
+     NoMonomorphismRestriction
+   , FlexibleContexts #-}
 
 -- remove unix dependency in music-dynamics-literal
 
@@ -13,7 +14,7 @@ import Text.Parsec
 --import Text.Parsec.ByteString.Lazy -- haskellDef below seems to preclude this...
 import Text.Parsec.String
 import qualified Text.Parsec.Token as P
-import Text.Parsec.Language (haskellDef)
+-- import Text.Parsec.Language (haskellDef)
 import Text.ParserCombinators.Parsec.Number -- cabal install parsec-numbers
 
 import Data.Ratio
@@ -27,24 +28,38 @@ import Data.Maybe
 import Control.Applicative hiding (many, (<|>))
 import Control.Arrow
 import Control.Monad
+import Control.Monad.Reader
+import Control.Monad.Identity
+import GHC.Exts
 
-main = either print debug =<< parseFromFile transcript (f ++ ".dt") -- dt = 'degreeTranscript format?'
+main = either print engrave =<< parseFromFile transcript (f ++ ".dt") -- dt = 'degreeTranscript format'
   where f = "tears"
-        engrave = writeMusic f . lily
+        engrave = writeParts f
         debug = writeFile (f ++ ".debug") . show
 
-lily :: Transcription -> (Music,String)
-lily s = (m,ex)
+writeParts f t = do 
+  mapM_ (writeMusic f . lily t) v
+  writeScore f t
+  where v = concat $ (\xs -> if (length xs > 1) then ((\(x@(Voice _ i@(Instrument s _ _)),n) -> x{instrument = i{name = s ++ "(" ++ show n ++ ")"}}) <$> zip xs [1..]) else xs) <$> (groupWith (show . instrument) $ voices t)
+
+writeScore = undefined
+
+lily :: Transcription -> Voice -> (Music,String,String)
+lily t v = (m,ex,i)
   where m =     Clef Treble
-            ^+^ L.Time (time s) 4
-            ^+^ L.Key (transpose (key s) outKey First Natural) (mode $ key s)
-            ^+^ Relative (Pitch (PitchClass C Natural, Just 2)) (sumV (lily' (time s) (key s) outKey <$> sections s))
-        ex = " \\header { title = " ++ show (title s) ++ " composer = " ++ show (composer s) ++ " instrument = \"tenor recorder in C\"" ++ "}"
-        outKey = PitchClass F Natural
+            ^+^ L.Time (time t) 4
+            ^+^ L.Key (transpose (key t) outKey First Natural) (mode $ key t)
+            ^+^ Relative (Pitch (PitchClass C Natural, Just $ 2 + (maybe 0 id $ oct $ instrument v))) (sumV (lily' (time t) (key t) outKey <$> sections t))
+        ex = " \\header { title = " ++ show (title t) ++ " composer = " ++ show (composer t) ++ " instrument = " ++ show i ++ "}"
+        outKey = iKey $ instrument v
+        i = show $ instrument v
+
+instance Show Instrument where
+  show (Instrument s k oct) = s ++ " in " ++ show k
 
 lily' :: Time -> Key -> PitchClass -> Section -> Music
 -- lily' t inKM outK s = Sequential [sumV $ lily'' inKM outK <$> bars (Duration $ (fromIntegral t) / 4) (notes s)]
-lily' = undefined
+lily' t inKM outK s = Sequential [L.Rest (Just 1) []]
 
 bars :: Duration -> [DegreeNote] -> [DegreeNote]
 bars = undefined
@@ -126,7 +141,11 @@ data Voice = Voice {
     columnVoice :: Column
   , instrument :: Instrument
   } deriving (Eq,Show) 
-data Instrument = Instrument String PitchClass Octave deriving (Eq,Show)
+data Instrument = Instrument {
+      name :: String 
+    , iKey :: PitchClass 
+    , oct  :: Octave 
+  } deriving (Eq)
 data Key = Key { 
         pc   :: PitchClass 
       , mode :: Mode
@@ -155,17 +174,34 @@ data Degree = First | Second | Third | Fourth | Fifth | Sixth | Seventh
 type Octave = Maybe Int
 type Tie = Bool
 
-lexxer = P.makeTokenParser haskellDef -- haskellDef seems to lock us into Strings, no ByteStrings/Text...
+lexxer = P.makeTokenParser haskellDef' -- haskellDef seems to lock us into Strings, no ByteStrings/Text...
 whiteSpace = P.whiteSpace lexxer
 -- natural' = toNatural . (fromInteger :: Integer -> Word) <$> P.natural lexxer
 natural = fromIntegral <$> P.natural lexxer
 naturalOrFloat = P.naturalOrFloat lexxer
 
+-- stolen from http://hackage.haskell.org/package/parsec-3.1.3/docs/src/Text-Parsec-Language.html#haskellStyle
+-- since haskellDef locks us in to Strings and Identity
+haskellDef' :: P.GenLanguageDef s u m
+haskellDef' = P.LanguageDef
+                { P.commentStart   = "{-"
+                , P.commentEnd     = "-}"
+                , P.commentLine    = "--"
+                , P.nestedComments = True               
+                , P.identStart     = undefined -- letter
+                , P.identLetter    = undefined -- alphaNum <|> oneOf "_'"
+                , P.opStart        = undefined -- P.opLetter haskellDef''
+                , P.opLetter       = undefined -- oneOf ":!#$%&*+./<=>?@\\^|-~"
+                , P.reservedOpNames= undefined -- []
+                , P.reservedNames  = undefined -- []
+                , P.caseSensitive  = undefined -- True                
+                }
+
 -- a $> b = a >> return b
 ($>) = flip (<$)
 (<<) = flip (>>)
 
-tryChoice :: [Parser a] -> Parser a
+-- tryChoice :: [Parser a] -> Parser a
 tryChoice = choice . (try <$>)
 
 line = manyTill anyChar newline -- (newline <|> (eof >> return '\n'))
@@ -177,7 +213,7 @@ voiceP :: Parser Voice
 voiceP = try $ whiteSpace >> Voice <$> col (/= 1) "voice spec can't be in column 1 (which is for durations)" <*> instrumentP
 
 instrumentP :: Parser Instrument
-instrumentP = Instrument <$> manyTill anyChar (try (string " in ")) <*> pitchClassP <*> octaveP
+instrumentP = Instrument <$> manyTill anyChar (try $ string " in ") <*> pitchClassP <*> octaveP
 
 pitchClassP :: Parser PitchClass
 pitchClassP = whiteSpace >> PitchClass <$> whiteKeyP <*> accidentalP
@@ -207,31 +243,44 @@ patternP :: Parser Pattern
 patternP = whiteSpace >> many1 letter
 
 sectionP :: Parser Section
-sectionP = try $ Section <$> (whiteSpace >> letter <* whiteSpace) <*> (sepEndBy1 parts whiteSpace)
+-- sectionP = try $ Section <$> (whiteSpace >> letter <* whiteSpace) <*> (sepEndBy1 parts whiteSpace)
+sectionP = undefined
 
-parts :: Parser [Element]
+--parts :: Parser [Element]
+{-
 parts = do
-   col (== 1) "duration must fall at beginning of line in column 1"
-   d <- durationP
-   ns <- many1 $ tryChoice [degreeNoteP, restP]
+   lift $ col (== 1) "duration must fall at beginning of line in column 1"
+   d <- lift durationP
+   ns <- {-lift many1 . -}(many1 <$> lift . tryChoice) =<< {-sequence-} [degreeNoteP, restP]
    return $ (\(c,x) -> Element x c d) <$> ns
+-}
 
-degreeNoteP,restP :: Parser (Column, DegreeNote)
-degreeNoteP =  w $ DegreeNote <$> accidentalP <*> degreeP <*> octaveP <*> pure False
-restP = w $ Rest <$ char 'R'
-w = ((,) <$> (whiteSpace >> col (/= 1) "first item in line must be duration, not note") <*>)
+-- degreeNoteP,restP :: Parser (Column, DegreeNote)
+degreeNoteP,restP :: (Eq a, Num a) => ReaderT [a] (ParsecT String () Identity) (a, DegreeNote)
+degreeNoteP = w' $ DegreeNote <$> accidentalP <*> degreeP <*> octaveP <*> pure False
+restP = w' $ Rest <$ char 'R'
 
+w' :: (Eq a, Num a, Stream s m Char) => ParsecT s u m b -> ReaderT [a] (ParsecT s u m) (a, b)
+w' = (((,) <$> lift (whiteSpace >> col (/= 1) "first item in line must be duration, not note") <* (lift . flip col "non-part column, do you have some naughty tabs?" . flip elem =<< ask) ) <*>) . lift
+
+--w :: (Eq a, Num a) => b -> ParsecT String u (Reader [a]) (a, b)
+w d = do
+  c <- whiteSpace >> col (/= 1) "first item in line must be duration, not note"
+  cs <- ask
+  col (flip elem cs) "non-part column, do you have some naughty tabs?"
+  return (c,d)
+
+--col :: (Num b, Stream s m t) => (b -> Bool) -> String -> ParsecT s u m b
 col f s = do 
    c <- fromIntegral . sourceColumn <$> getPosition
-   if f c
-        then return c
-        else unexpected s
+   if f c then return c
+          else unexpected s
 
-degreeP :: Parser Degree
+-- degreeP :: Parser Degree
 degreeP = fromJust . flip M.lookup m <$> tryChoice (string <$> M.keys m)
   where m = M.fromList $ zip (show <$> [1..]) degrees
 
-accidentalP :: Parser Accidental
+-- accidentalP :: Parser Accidental
 accidentalP = option Natural $ tryChoice [
     DoubleFlat  <$ string "bb" -- must try first!
   , Flat        <$ char   'b'
@@ -239,7 +288,7 @@ accidentalP = option Natural $ tryChoice [
   , DoubleSharp <$ char   'x'
   ] -- <?> "Accidental"
 
-octaveP :: Parser Octave
+-- octaveP :: Parser Octave
 octaveP = optionMaybe $ tryChoice [ 
                countChar '+'
   , negate <$> countChar '-'
