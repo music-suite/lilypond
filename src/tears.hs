@@ -206,62 +206,78 @@ tryChoice = choice . (try <$>)
 
 line = manyTill anyChar newline -- (newline <|> (eof >> return '\n'))
 
-transcript :: Parser Transcription
-transcript = Transcription <$> line <*> line <*> line <*> keyP <*> timeP <*> startP <*> patternP <*> many1 voiceP <*> many1 sectionP <* (whiteSpace >> eof)
+--transcript :: Parser Transcription
+-- transcript = Transcription <$> line <*> line <*> line <*> keyP <*> timeP <*> startP <*> patternP <*> many1 voiceP <*> many1 sectionP <* (whiteSpace >> eof)
+transcript = do 
+  title    <- line
+  composer <- line
+  year     <- line
+  key      <- keyP
+  time     <- timeP
+  start    <- startP
+  pattern  <- patternP
+  voices   <- many1 voiceP
+--  sections <- many1 $ lift $ runReader sectionP $ columnVoice <$> voices
+  let sections = undefined
+  whiteSpace >> eof
+  return $ Transcription title composer year key time start pattern voices sections
 
-voiceP :: Parser Voice
+f = flip runReaderT [1,2] $ runParserT sectionP () "" ""
+--f' = flip runReaderT [1,2] $ sequence sectionP
+
+--voiceP :: Parser Voice
 voiceP = try $ whiteSpace >> Voice <$> col (/= 1) "voice spec can't be in column 1 (which is for durations)" <*> instrumentP
 
-instrumentP :: Parser Instrument
+--instrumentP :: Parser Instrument
 instrumentP = Instrument <$> manyTill anyChar (try $ string " in ") <*> pitchClassP <*> octaveP
 
-pitchClassP :: Parser PitchClass
+--pitchClassP :: Parser PitchClass
 pitchClassP = whiteSpace >> PitchClass <$> whiteKeyP <*> accidentalP
 
-whiteKeyP, whiteKeyP' :: Parser WhiteKey
+--whiteKeyP, whiteKeyP' :: Parser WhiteKey
 whiteKeyP' = read . pure . toUpper <$> tryChoice (char <$> ws ++ (toLower <$> ws)) -- <?> "WhiteKey"
   where ws = head . show <$> whiteKeys
 whiteKeyP = tryChoice (enum' <$> enum)
         where enum' s = s <$ tryChoice (char <$> [u, toLower u])
                where u = head $ show s
 
-modeP :: Parser Mode
+--modeP :: Parser Mode
 modeP = whiteSpace >> tryChoice [ string "min" $> Minor
                                 , string "maj" $> Major
                                 ] -- <?> "Mode"
 
-keyP :: Parser Key
+--keyP :: Parser Key
 keyP = whiteSpace >> Key <$> pitchClassP <*> modeP
 
-timeP :: Parser Time
+--timeP :: Parser Time
 timeP = whiteSpace >> natural
 
-startP :: Parser Start
+--startP :: Parser Start
 startP = frac
 
-patternP :: Parser Pattern
+--patternP :: Parser Pattern
 patternP = whiteSpace >> many1 letter
 
-sectionP :: Parser Section
--- sectionP = try $ Section <$> (whiteSpace >> letter <* whiteSpace) <*> (sepEndBy1 parts whiteSpace)
-sectionP = undefined
+--sectionP :: Parser Section
+sectionP = try $ Section <$> (whiteSpace >> letter <* whiteSpace) <*> (sepEndBy1 parts whiteSpace)
+-- sectionP = undefined
 
 --parts :: Parser [Element]
-{-
+--parts :: (Eq b, Num b, MonadReader [b] m) => ParsecT s u m [Element]
+--parts :: ParsecT s u (Reader [Column]) [Element]
 parts = do
-   lift $ col (== 1) "duration must fall at beginning of line in column 1"
-   d <- lift durationP
-   ns <- {-lift many1 . -}(many1 <$> lift . tryChoice) =<< {-sequence-} [degreeNoteP, restP]
+   col (== 1) "duration must fall at beginning of line in column 1"
+   d <- durationP
+   ns <- many1 $ tryChoice [degreeNoteP, restP]
    return $ (\(c,x) -> Element x c d) <$> ns
--}
 
 -- degreeNoteP,restP :: Parser (Column, DegreeNote)
-degreeNoteP,restP :: (Eq a, Num a) => ReaderT [a] (ParsecT String () Identity) (a, DegreeNote)
+--degreeNoteP,restP :: (Eq a, Num a) => ReaderT [a] (ParsecT String () Identity) (a, DegreeNote)
 degreeNoteP = w' $ DegreeNote <$> accidentalP <*> degreeP <*> octaveP <*> pure False
 restP = w' $ Rest <$ char 'R'
 
-w' :: (Eq a, Num a, Stream s m Char) => ParsecT s u m b -> ReaderT [a] (ParsecT s u m) (a, b)
-w' = (((,) <$> lift (whiteSpace >> col (/= 1) "first item in line must be duration, not note") <* (lift . flip col "non-part column, do you have some naughty tabs?" . flip elem =<< ask) ) <*>) . lift
+--w' :: (Eq a, Num a, Stream s m Char) => ParsecT s u m b -> ParsecT s u (Reader [a]) (a, b)
+w' = (((,) <$> (whiteSpace >> col (/= 1) "first item in line must be duration, not note") <* (flip col "non-part column, do you have some naughty tabs?" . flip elem =<< lift ask) ) <*>) 
 
 --w :: (Eq a, Num a) => b -> ParsecT String u (Reader [a]) (a, b)
 w d = do
@@ -296,9 +312,10 @@ octaveP = optionMaybe $ tryChoice [
 
 countChar = (length <$>) . many1 . char
 
-durationP :: Parser Duration
+--durationP :: Parser Duration
 durationP = (/ 4) <$> frac
 
-frac :: (Fractional a) => Parser a
+--frac :: (Fractional a) => Parser a
 frac' = (fromRational . toRational ||| fromRational . toRational) <$> (whiteSpace >> naturalOrFloat)
-frac = fromRational . toRational <$> floating3 False
+--frac = fromRational . toRational <$> floating3 False
+frac = undefined
