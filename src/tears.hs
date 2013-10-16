@@ -32,7 +32,7 @@ import Control.Monad.Reader
 import Control.Monad.Identity
 import GHC.Exts
 
-main = either print engrave =<< parseFromFile transcript (f ++ ".dt") -- dt = 'degreeTranscript format'
+main = either print debug =<< parseFromFile transcript (f ++ ".dt") -- dt = 'degreeTranscript format'
   where f = "tears"
         engrave = writeParts f
         debug = writeFile (f ++ ".debug") . show
@@ -217,10 +217,29 @@ transcript = do
   start    <- startP
   pattern  <- patternP
   voices   <- many1 voiceP
---  sections <- many1 $ lift $ runReader sectionP $ columnVoice <$> voices
-  let sections = undefined
-  whiteSpace >> eof
+
+  -- feels like i should be using parsec's =<< here
+  u <- getState
+  n <- sourceName <$> getPosition
+  i <- getInput
+  let sections = either (error . show) id $ flip runReader (columnVoice <$> voices) $ runParserT (many1 sectionP <* (whiteSpace >> eof)) u n i
+
+--  sections' <- return . either undefined id $ flip runReader (columnVoice <$> voices) $ join ((runParserT $ many1 sectionP) <$> getState <*> (sourceName <$> getPosition) <*> getInput)
+
+--  let sections = either undefined id $ flip runReader (columnVoice <$> voices) s
+--      s = join ((runParserT $ many1 sectionP) <$> undefined <*> undefined <*> undefined) -- <$> getState <*> (sourceName <$> getPosition) <*> getInput)
+{-
+      s = do 
+        u <- getState
+        n <- sourceName <$> getPosition
+        i <- getInput
+        return $ runParserT (many1 sectionP) u n i
+  --let sections = flip runReader (columnVoice <$> voices) =<< many1 sectionP
+  -}
+  --whiteSpace >> eof
   return $ Transcription title composer year key time start pattern voices sections
+
+
 
 f = flip runReaderT [1,2] $ runParserT sectionP () "" ""
 --f' = flip runReaderT [1,2] $ sequence sectionP
@@ -259,6 +278,8 @@ startP = frac
 patternP = whiteSpace >> many1 letter
 
 --sectionP :: Parser Section
+--sectionP :: (Eq b, Num b, MonadReader [b] m) => ParsecT String u m Section
+sectionP :: ParsecT String u (Reader [Column]) Section
 sectionP = try $ Section <$> (whiteSpace >> letter <* whiteSpace) <*> (sepEndBy1 parts whiteSpace)
 -- sectionP = undefined
 
@@ -316,6 +337,6 @@ countChar = (length <$>) . many1 . char
 durationP = (/ 4) <$> frac
 
 --frac :: (Fractional a) => Parser a
-frac' = (fromRational . toRational ||| fromRational . toRational) <$> (whiteSpace >> naturalOrFloat)
---frac = fromRational . toRational <$> floating3 False
-frac = undefined
+frac = (fromRational . toRational ||| fromRational . toRational) <$> (whiteSpace >> naturalOrFloat) -- requires leading 0. :(
+--frac = fromRational . toRational <$> floating3 False -- text.numbers didn't use parsect :(
+--frac = undefined
