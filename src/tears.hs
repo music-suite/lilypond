@@ -1,6 +1,7 @@
 {-# LANGUAGE 
      NoMonomorphismRestriction
-   , FlexibleContexts #-}
+   , FlexibleContexts 
+   , RankNTypes #-}
 
 -- remove unix dependency in music-dynamics-literal
 
@@ -15,7 +16,8 @@ import Text.Parsec
 import Text.Parsec.String
 import qualified Text.Parsec.Token as P
 -- import Text.Parsec.Language (haskellDef)
-import Text.ParserCombinators.Parsec.Number -- cabal install parsec-numbers
+--import Text.ParserCombinators.Parsec.Number -- cabal install parsec-numbers
+import NumberGen -- my generalization of parsec-numbers to ParsecT
 
 import Data.Ratio
 import Numeric.Natural hiding (natural)
@@ -199,7 +201,6 @@ haskellDef' = P.LanguageDef
 
 -- a $> b = a >> return b
 ($>) = flip (<$)
-(<<) = flip (>>)
 
 -- tryChoice :: [Parser a] -> Parser a
 tryChoice = choice . (try <$>)
@@ -207,7 +208,6 @@ tryChoice = choice . (try <$>)
 line = manyTill anyChar newline -- (newline <|> (eof >> return '\n'))
 
 --transcript :: Parser Transcription
--- transcript = Transcription <$> line <*> line <*> line <*> keyP <*> timeP <*> startP <*> patternP <*> many1 voiceP <*> many1 sectionP <* (whiteSpace >> eof)
 transcript = do 
   title    <- line
   composer <- line
@@ -217,32 +217,20 @@ transcript = do
   start    <- startP
   pattern  <- patternP
   voices   <- many1 voiceP
-
-  -- feels like i should be using parsec's =<< here
-  u <- getState
-  n <- sourceName <$> getPosition
-  i <- getInput
-  let sections = either (error . show) id $ flip runReader (columnVoice <$> voices) $ runParserT (many1 sectionP <* (whiteSpace >> eof)) u n i
-
---  sections' <- return . either undefined id $ flip runReader (columnVoice <$> voices) $ join ((runParserT $ many1 sectionP) <$> getState <*> (sourceName <$> getPosition) <*> getInput)
-
---  let sections = either undefined id $ flip runReader (columnVoice <$> voices) s
---      s = join ((runParserT $ many1 sectionP) <$> undefined <*> undefined <*> undefined) -- <$> getState <*> (sourceName <$> getPosition) <*> getInput)
-{-
-      s = do 
-        u <- getState
-        n <- sourceName <$> getPosition
-        i <- getInput
-        return $ runParserT (many1 sectionP) u n i
-  --let sections = flip runReader (columnVoice <$> voices) =<< many1 sectionP
-  -}
-  --whiteSpace >> eof
+--  sections <- runPTReader (many1 sectionP <* (whiteSpace >> eof)) (columnVoice <$> voices)
+  sections <- runPTR (columnVoice <$> voices) (many1 sectionP) 
+  whiteSpace >> eof
   return $ Transcription title composer year key time start pattern voices sections
 
+-- shouldn't this be parsec's =<<?
+runPTReader p v = either (error . show) id <$> flip runReader v <$> (runParserT p <$> getState <*> (sourceName <$> getPosition) <*> getInput)
+           
+-- from saizan           
+mapParsecT :: (Functor m, Functor n, Monad m, Monad n) => (forall a. m a -> n a) -> ParsecT s u m a -> ParsecT s u n a
+mapParsecT f p = mkPT $ \ s -> f $ (f <$>) <$> runParsecT p s
 
-
-f = flip runReaderT [1,2] $ runParserT sectionP () "" ""
---f' = flip runReaderT [1,2] $ sequence sectionP
+--runRP :: r -> ParsecT s u (Reader r) a -> Parsec s u a
+runPTR r = mapParsecT $ flip runReaderT r
 
 --voiceP :: Parser Voice
 voiceP = try $ whiteSpace >> Voice <$> col (/= 1) "voice spec can't be in column 1 (which is for durations)" <*> instrumentP
@@ -281,7 +269,6 @@ patternP = whiteSpace >> many1 letter
 --sectionP :: (Eq b, Num b, MonadReader [b] m) => ParsecT String u m Section
 sectionP :: ParsecT String u (Reader [Column]) Section
 sectionP = try $ Section <$> (whiteSpace >> letter <* whiteSpace) <*> (sepEndBy1 parts whiteSpace)
--- sectionP = undefined
 
 --parts :: Parser [Element]
 --parts :: (Eq b, Num b, MonadReader [b] m) => ParsecT s u m [Element]
@@ -337,6 +324,5 @@ countChar = (length <$>) . many1 . char
 durationP = (/ 4) <$> frac
 
 --frac :: (Fractional a) => Parser a
-frac = (fromRational . toRational ||| fromRational . toRational) <$> (whiteSpace >> naturalOrFloat) -- requires leading 0. :(
---frac = fromRational . toRational <$> floating3 False -- text.numbers didn't use parsect :(
---frac = undefined
+--frac = (fromRational . toRational ||| fromRational . toRational) <$> (whiteSpace >> naturalOrFloat) -- requires leading 0. :(
+frac = fromRational . toRational <$> floating3 False -- text.numbers didn't use parsect :(
