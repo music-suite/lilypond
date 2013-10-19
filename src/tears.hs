@@ -34,7 +34,7 @@ import Control.Monad.Reader
 import Control.Monad.Identity
 import GHC.Exts
 
-main = either print debug =<< parseFromFile transcript (f ++ ".dt") -- dt = 'degreeTranscript format'
+main = either print engrave =<< parseFromFile transcript (f ++ ".dt") -- dt = 'degreeTranscript format'
   where f = "tears"
         engrave = writeParts f
         debug = writeFile (f ++ ".debug") . show
@@ -51,39 +51,40 @@ lily t v = (m,ex,i)
   where m =     Clef Treble
             ^+^ L.Time (time t) 4
             ^+^ L.Key (transpose (key t) outKey First Natural) (mode $ key t)
-            ^+^ Relative (Pitch (PitchClass C Natural, Just $ 2 + (maybe 0 id $ oct $ instrument v))) (sumV (lily' (time t) (key t) outKey <$> sections t))
+            ^+^ Relative (Pitch (PitchClass C Natural, Just $ 2 + (maybe 0 id $ oct $ instrument v))) (sumV (lily' (time t) (key t) outKey <$> getVoice (columnVoice v) <$> sections t))
         ex = " \\header { title = " ++ show (title t) ++ " composer = " ++ show (composer t) ++ " instrument = " ++ show i ++ "}"
         outKey = iKey $ instrument v
         i = show $ instrument v
 
-instance Show Instrument where
-  show (Instrument s k oct) = s ++ " in " ++ show k
+getVoice :: Column -> Section -> [Element]
+getVoice c s = reverse $ foldl f [] $ notes s
+  where f done ns = g (nub $ duration <$> ns) done $ filter ((c == ) . columnElement) ns
+        g []      _          _   = error "impossible -- no duration"
+        g (_:_:_) _          _   = error "impossible -- more than one duration on a line"
+        g _       []         []  = error "first line of section must have note for every voice" -- should we assume rest or tie from previous section?  what if first section?        
+        g [d]     (now:done) []  = now{duration = d + duration now} : done
+        g _       done       [n] = n : done
+        g _       _          _   = error "impossible -- two notes in one row in same column!?"
 
-lily' :: Time -> Key -> PitchClass -> Section -> Music
--- lily' t inKM outK s = Sequential [sumV $ lily'' inKM outK <$> bars (Duration $ (fromIntegral t) / 4) (notes s)]
-lily' t inKM outK s = Sequential [L.Rest (Just 1) []]
+lily' :: Time -> Key -> PitchClass -> [Element] -> Music
+lily' t inKM outK s = Sequential [sumV $ lily'' inKM outK <$> bars (Duration $ (fromIntegral t) / 4) s]
 
-bars :: Duration -> [DegreeNote] -> [DegreeNote]
-bars = undefined
-{-
+bars :: Duration -> [Element] -> [Element]
 bars t ns = bars' t 0 ns []
 bars' _ _  []     out = reverse out
 bars' t t' (n:ns) out = bars' t t'' ns' $ this : out
         where (t'', this, ns') = if now <= t 
                 then (mod' now t, n    ,          ns) 
                 else (0         , first, second : ns)
-              now  = t' + dur n
+              now  = t' + duration n
               (first,second) = splitDur (t - t') n
-              splitDur d (DegreeNote c a g o d' _) = (DegreeNote c a g o d True, DegreeNote c a g Nothing (d' - d) False)
-              splitDur d (Rest       c       d'  ) = (Rest       c       d     , Rest       c            $ d' - d       )
-              dur (DegreeNote _ _ _ _ d _) = d
-              dur (Rest _ d) = d
+              splitDur d (Element (DegreeNote a g o _) c d') = (Element (DegreeNote a g o True) c d, Element (DegreeNote a g Nothing False) c $ d' - d)
+              splitDur d (Element  Rest                c d') = (Element  Rest                   c d, Element  Rest                          c $ d' - d)
 
-lily'' :: Key -> PitchClass -> DegreeNote -> Music
-lily'' _    _    (Rest _ dur)             = L.Rest                                      (Just dur) []
-lily'' inKM outK (DegreeNote _ a d o dur t) = Note (NotePitch (Pitch (pc', o)) Nothing) (Just dur) [Tie | t] -- silly hlint comprehension trick
+lily'' :: Key -> PitchClass -> Element -> Music
+lily'' _    _    (Element  Rest                _ dur) = L.Rest                                    (Just dur) []
+lily'' inKM outK (Element (DegreeNote a d o t) _ dur) = Note (NotePitch (Pitch (pc', o)) Nothing) (Just dur) [Tie | t] -- silly hlint comprehension trick
         where pc' = transpose inKM outK d a
--}
 
 transpose :: Key -> PitchClass -> Degree -> Accidental -> PitchClass
 transpose (Key inK m) outK d a = tone (Key (step (head $ steps outK inK) (PitchClass C Natural)) m) a d
@@ -148,6 +149,8 @@ data Instrument = Instrument {
     , iKey :: PitchClass 
     , oct  :: Octave 
   } deriving (Eq)
+instance Show Instrument where
+  show (Instrument s k oct) = s ++ " in " ++ show k
 data Key = Key { 
         pc   :: PitchClass 
       , mode :: Mode
@@ -217,14 +220,10 @@ transcript = do
   start    <- startP
   pattern  <- patternP
   voices   <- many1 voiceP
---  sections <- runPTReader (many1 sectionP <* (whiteSpace >> eof)) (columnVoice <$> voices)
   sections <- runPTR (columnVoice <$> voices) (many1 sectionP) 
   whiteSpace >> eof
   return $ Transcription title composer year key time start pattern voices sections
-
--- shouldn't this be parsec's =<<?
-runPTReader p v = either (error . show) id <$> flip runReader v <$> (runParserT p <$> getState <*> (sourceName <$> getPosition) <*> getInput)
-           
+        
 -- from saizan           
 mapParsecT :: (Functor m, Functor n, Monad m, Monad n) => (forall a. m a -> n a) -> ParsecT s u m a -> ParsecT s u n a
 mapParsecT f p = mkPT $ \ s -> f $ (f <$>) <$> runParsecT p s
