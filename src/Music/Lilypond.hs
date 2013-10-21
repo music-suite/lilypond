@@ -27,6 +27,7 @@ module Music.Lilypond (
         Note(..),
         Clef(..),
         Mode(..),
+        Bar(..),
         
         -- ** Attributes
         Value,
@@ -172,6 +173,10 @@ data ScoreBlock
     -- full markup etc
 -}
 
+data Bar = Double deriving (Eq,Show)
+instance Pretty Bar where
+    pretty Double = "\"||\""
+
 -- | A Lilypond music expression.
 --   
 --   Use the 'Pretty' instance to convert into Lilypond syntax.
@@ -194,7 +199,9 @@ data Music
     | Tempo (Maybe String) (Maybe (Duration,Integer)) -- ^ Tempo mark.
     | New String (Maybe String) Music               -- ^ New expression.
     | Context String (Maybe String) Music           -- ^ Context expression.
-    | Set String Value                            
+    | Set String Value      
+    | Bar Bar
+    | Mark (Maybe String)                      
     deriving (Eq, Show)
 
 instance Pretty Music where
@@ -256,6 +263,9 @@ instance Pretty Music where
 
     pretty (Set name val) =
         "\\set" <+> string name <+> "=" <+> (string . show) val
+
+    pretty (Bar b) = "\\bar" <+> pretty b
+    pretty (Mark Nothing) = "\\mark \\default"
 
     -- pretty _                        = notImpl "Unknown music expression"
 

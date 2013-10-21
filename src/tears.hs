@@ -40,22 +40,33 @@ main = either print engrave =<< parseFromFile transcript (f ++ ".dt") -- dt = 'd
         debug = writeFile (f ++ ".debug") . show
 
 writeParts f t = do 
-  mapM_ (writeMusic f . lily t) v
+  mapM_ (writeMusic f . fix . lily t) v
   writeScore f t
   where v = concat $ (\xs -> 
               if length xs > 1
                  then (\(x@(Voice _ i@(Instrument s _ _)),n) -> x{instrument = i{name = s ++ "(" ++ show n ++ ")"}}) <$> zip xs [1..]
                  else xs)
             <$> groupWith (show . instrument) (voices t)
+        fix (a,b,c,d) = (a ^+^ d,b,c)
 
-writeScore = undefined
+writeScore f t = writeMusic f (each {- single -}, ex $ head ms, i $ head ms)
+  where ms = (\c -> lily t $ Voice c $ Instrument "score" concert Nothing) <$> (nub $ columnVoice <$> voices t)
+        m  (x,_,_,_) = x
+        ex (_,x,_,_) = x
+        i  (_,_,x,_) = x
+        p  (_,_,_,x) = x
+        single = (m $ head ms) ^+^ Simultaneous True (p <$> ms)
+        each = New "StaffGroup" Nothing $ Simultaneous False $ s <$> ms
+        s m' = New "Staff" Nothing $ m m' ^+^ p m'         
 
-lily :: Transcription -> Voice -> (Music,String,String)
-lily t v = (m,ex,i)
+concert = PitchClass C Natural
+
+--lily :: Transcription -> Voice -> (Music,String,String)
+lily t v = (m,ex,i,p)
   where m =     Clef Treble
             ^+^ L.Time (time t) 4
             ^+^ L.Key (transpose (key t) outKey Natural First) (mode $ key t)
-            ^+^ Relative (Pitch (PitchClass C Natural, Just $ 2 + fromMaybe 0 (oct $ instrument v))) (sumV (lily' (time t) (key t) outKey <$> getVoice (columnVoice v) <$> sections t))
+        p = Relative (Pitch (concert, Just $ 2 + fromMaybe 0 (oct $ instrument v))) (sumV (lily' (time t) (key t) outKey <$> getVoice (columnVoice v) <$> sections t))
         ex = " \\header { title = " ++ show (title t) ++ " composer = " ++ show (composer t) ++ " instrument = " ++ show i ++ "}"
         outKey = iKey $ instrument v
         i = show $ instrument v
@@ -71,7 +82,7 @@ getVoice c s = reverse $ foldl f [] $ notes s
         g _       _          _   = error "impossible -- two notes in one row in same column!?"
 
 lily' :: Time -> Key -> PitchClass -> [Element] -> Music
-lily' t inKM outK s = Sequential [sumV $ lily'' inKM outK <$> bars (Duration $ (fromIntegral t) / 4) s]
+lily' t inKM outK s = Mark Nothing ^+^ Sequential [sumV $ lily'' inKM outK <$> bars (Duration $ (fromIntegral t) / 4) s] ^+^ Bar Double
 
 bars :: Duration -> [Element] -> [Element]
 bars t ns = bars' t 0 ns []
@@ -91,7 +102,7 @@ lily'' inKM outK (Element (DegreeNote a d o t) _ dur) = Note (NotePitch (Pitch (
         where pc' = transpose inKM outK a d
 
 transpose :: Key -> PitchClass -> Accidental -> Degree -> PitchClass
-transpose (Key inK m) outK = tone $ Key (step (head $ steps outK inK) (PitchClass C Natural)) m
+transpose (Key inK m) outK = tone $ Key (step (head $ steps outK inK) concert) m
 
 step (0,0) = id
 step (0,h) = step (0,h-1) . inc Half
