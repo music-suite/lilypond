@@ -18,6 +18,9 @@ import System.Directory
 import Prelude hiding (catch)
 import Control.Exception
 import System.IO.Error hiding (catch)
+import System.Info
+import Data.Char
+import Data.List
 
 -- from http://stackoverflow.com/questions/8502201/remove-file-if-it-exists-in-haskell
 removeIfExists :: FilePath -> IO ()
@@ -28,7 +31,7 @@ removeIfExists fileName = removeFile fileName `catch` handleExists
 
 writeMusic :: FilePath -> (Music,String,String) -> IO ()
 writeMusic path' (m,ex,t) = do
-    (flip when $ error $ "couldn't find " ++ exe ++ " on system path") =<< isNothing <$> findExecutable exe
+    flip when (error $ "couldn't find " ++ exe ++ " on system path") =<< isNothing <$> findExecutable exe
     v <- if windows 
         then return "2.16.2" --permission denied in windows for createProcess
         else readProcess exe ["-v"] "" 
@@ -39,7 +42,7 @@ writeMusic path' (m,ex,t) = do
 
     if windows 
         then do
-            putStrLn $ "\n" ++ cmd
+            putStrLn $ '\n' : cmd
             void $ system cmd
                 -- rawSystem exe [ly'] -- createProcess: permission denied
             void $ system $ "start" ++ " " ++ "\"\"" ++ " " ++ pdf -- weird, that middle empty string isn't necessary on some windows versions/configs or something?
@@ -80,16 +83,15 @@ Prelude System.Cmd> rawSystem "\"C:\\Program Files (x86)\\LilyPond\\usr\\bin\\Li
 *** Exception: "C:\Program Files (x86)\LilyPond\usr\bin\Lilypond": createProcess: permission denied (Permission denied)
 -}
 
-  where exe = if False && windows then "C:\\Program Files (x86)\\LilyPond\\usr\\bin\\lilypond" -- system doesn't seem to allow spaces in both executable and args (but either independently OK), even w/double or single quotes, so must add to path
-                                  else "lilypond"
-        windows = True
+  where exe = "lilypond"
+        windows = "mingw" `isPrefixOf` (toLower <$> os)
         pdf' = path ++ ".pdf"
         pdf = wrap "\"" pdf'
         ly = path ++ ".ly"
         ly' = wrap "\"" ly
         path = path' ++ "." ++ t
         wrap c s = c ++ s ++ c
-        cmd' = (wrap "\"" exe) ++ " " ++ ly'
+        cmd' = wrap "\"" exe ++ " " ++ ly'
         cmd = exe ++ " " ++ ly'
 
 data Format = PDF | PNG | PS
