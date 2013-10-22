@@ -51,12 +51,12 @@ writeParts f t = do
         fix (a,b,c,d) = (a ^+^ d,b,c)
 
 writeScore f t = writeMusic f (each {- single -}, ex $ head ms, i $ head ms)
-  where ms = lily t . (`Voice` (Instrument "score" concert Nothing)) <$> (nub $ columnVoice <$> voices t)
+  where ms = lily t . (`Voice` Instrument "score" concert Nothing) <$> nub (columnVoice <$> voices t)
         m  (x,_,_,_) = x
         ex (_,x,_,_) = x
         i  (_,_,x,_) = x
         p  (_,_,_,x) = x
-        single = (m $ head ms) ^+^ Simultaneous True (p <$> ms)
+        single = m (head ms) ^+^ Simultaneous True (p <$> ms)
         each = New "StaffGroup" Nothing $ Simultaneous False $ s <$> ms
         s m' = New "Staff" Nothing $ m m' ^+^ p m'         
 
@@ -112,7 +112,7 @@ steps k1 k2 = filter ((k2 ==) . (`step` k1)) [(w,h) | w <- [0..5], h <- [0..2]]
 
 diff d1 d2 = pos d2 - pos d1
 pos = fromMaybe (error "not an elem") . (`elemIndex` enum)
-get xs = (xs !!) . (`mod` (length xs))
+get xs = (xs !!) . (`mod` length xs)
 
 enum :: (Enum a, Bounded a) => [a]
 enum = [minBound .. maxBound]
@@ -135,7 +135,7 @@ getNote :: PitchClass -> [Step] -> Int -> Accidental -> PitchClass
 getNote (PitchClass w a) _         0 = PitchClass w . (enum !!) . (pos a +) . diff Natural
 getNote p                (s:steps) d = getNote (inc s p) steps $ d - 1
 
-inc s (PitchClass w a) = PitchClass (get enum $ (pos w) + 1) (fix s $ get major $ pos w) -- depends on WhiteKeys as [C .. B]
+inc s (PitchClass w a) = PitchClass (get enum $ (pos w) + 1) $ fix s $ get major $ pos w -- depends on WhiteKeys as [C .. B]
         where fix Half Whole = adj (-) a
               fix Whole Half = adj (+) a
               fix _     _    = a -- args are equal
@@ -186,7 +186,7 @@ data Element = Element {
   , duration :: Duration
   } deriving (Eq)
 instance Show Element
-  where show (Element n d) = (show n) ++ " " ++ (show $ getDuration d)
+  where show (Element n d) = show n ++ " " ++ show (getDuration d)
 data Degree = First | Second | Third | Fourth | Fifth | Sixth | Seventh
   deriving (Eq,Show,Enum,Bounded)
 type Octave = Maybe Int
@@ -245,7 +245,7 @@ mapParsecT :: (Functor m, Functor n, Monad m, Monad n) => (forall a. m a -> n a)
 mapParsecT f p = mkPT $ \ s -> f $ (f <$>) <$> runParsecT p s -- how pointfree s?
 
 runPTR :: r -> ParsecT s u (Reader r) a -> Parsec s u a
-runPTR r = mapParsecT $ (`runReaderT` r) -- how pointfree r?
+runPTR r = mapParsecT (`runReaderT` r) -- how pointfree r?
 
 voiceP :: P Voice
 voiceP = try $ whiteSpace *> (Voice <$> col (/= 1) "voice spec can't be in column 1 (which is for durations)" <*> instrumentP)
