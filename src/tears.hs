@@ -1,7 +1,8 @@
 {-# LANGUAGE 
      NoMonomorphismRestriction
    , FlexibleContexts 
-   , RankNTypes #-}
+   , RankNTypes
+   , TupleSections #-}
 
 -- remove unix dependency in music-dynamics-literal
 
@@ -45,12 +46,12 @@ writeParts f t = do
   where v = concat $ (\xs -> 
               if length xs > 1
                  then (\(x@(Voice _ i@(Instrument s _ _)),n) -> x{instrument = i{name = s ++ "(" ++ show n ++ ")"}}) <$> zip xs [1..]
-                 else xs)
-            <$> groupWith (show . instrument) (voices t)
+                 else xs
+            ) <$> groupWith (show . instrument) (voices t)
         fix (a,b,c,d) = (a ^+^ d,b,c)
 
 writeScore f t = writeMusic f (each {- single -}, ex $ head ms, i $ head ms)
-  where ms = (\c -> lily t $ Voice c $ Instrument "score" concert Nothing) <$> (nub $ columnVoice <$> voices t)
+  where ms = lily t . (`Voice` (Instrument "score" concert Nothing)) <$> (nub $ columnVoice <$> voices t)
         m  (x,_,_,_) = x
         ex (_,x,_,_) = x
         i  (_,_,x,_) = x
@@ -61,25 +62,24 @@ writeScore f t = writeMusic f (each {- single -}, ex $ head ms, i $ head ms)
 
 concert = PitchClass C Natural
 
+--not lazy, but hey...
+--safeLookup :: a -> [(a,b)] -> b
+safeLookup a xs = case filter ((a ==) . fst) xs of []      -> error "no match"
+                                                   _:_:_   -> error "multiple matches"
+                                                   [(_,b)] -> b
+
 --lily :: Transcription -> Voice -> (Music,String,String)
 lily t v = (m,ex,i,p)
   where m =     Clef Treble
             ^+^ L.Time (time t) 4
-            ^+^ L.Key (transpose (key t) outKey Natural First) (mode $ key t)
-        p = Relative (Pitch (concert, Just $ 2 + fromMaybe 0 (oct $ instrument v))) (sumV (lily' (time t) (key t) outKey <$> getVoice (columnVoice v) <$> sections t))
+            ^+^ L.Key (transpose (key t) outKey First Natural) (mode $ key t)
+        p = Relative (Pitch (concert, Just $ 2 + fromMaybe 0 (oct $ instrument v))) $ sumV $ lily' (time t) (key t) outKey <$> getVoice (columnVoice v) <$> sections t
         ex = " \\header { title = " ++ show (title t) ++ " composer = " ++ show (composer t) ++ " instrument = " ++ show i ++ "}"
         outKey = iKey $ instrument v
         i = show $ instrument v
 
 getVoice :: Column -> Section -> [Element]
-getVoice c s = reverse $ foldl f [] $ notes s
-  where f done ns = g (nub $ duration <$> ns) done $ filter ((c == ) . columnElement) ns
-        g []      _          _   = error "impossible -- no duration"
-        g (_:_:_) _          _   = error "impossible -- more than one duration on a line"
-        g _       []         []  = error "first line of section must have note for every voice" -- should we assume rest or tie from previous section?  what if first section?        
-        g [d]     (now:done) []  = now{duration = d + duration now} : done
-        g _       done       [n] = n : done
-        g _       _          _   = error "impossible -- two notes in one row in same column!?"
+getVoice c = safeLookup c . notes
 
 lily' :: Time -> Key -> PitchClass -> [Element] -> Music
 lily' t inKM outK s = Mark Nothing ^+^ Sequential [sumV $ lily'' inKM outK <$> bars (Duration $ (fromIntegral t) / 4) s] ^+^ Bar Double
@@ -93,15 +93,14 @@ bars' t t' (n:ns) out = bars' t t'' ns' $ this : out
                 else (0         , first, second : ns)
               now  = t' + duration n
               (first,second) = splitDur (t - t') n
-              splitDur d (Element (DegreeNote a g o _) c d') = (Element (DegreeNote a g o True) c d, Element (DegreeNote a g Nothing False) c $ d' - d)
-              splitDur d (Element  Rest                c d') = (Element  Rest                   c d, Element  Rest                          c $ d' - d)
+              splitDur d (Element (DegreeNote a g o _) d') = (Element (DegreeNote a g o True) d, Element (DegreeNote a g Nothing False) $ d' - d)
+              splitDur d (Element  Rest                d') = (Element  Rest                   d, Element  Rest                          $ d' - d)
 
 lily'' :: Key -> PitchClass -> Element -> Music
-lily'' _    _    (Element  Rest                _ dur) = L.Rest                                    (Just dur) []
-lily'' inKM outK (Element (DegreeNote a d o t) _ dur) = Note (NotePitch (Pitch (pc', o)) Nothing) (Just dur) [Tie | t] -- silly hlint comprehension trick
-        where pc' = transpose inKM outK a d
+lily'' _    _    (Element  Rest                dur) = L.Rest                                                        (Just dur) []
+lily'' inKM outK (Element (DegreeNote a d o t) dur) = Note (NotePitch (Pitch (transpose inKM outK d a, o)) Nothing) (Just dur) [Tie | t] -- silly hlint comprehension trick
 
-transpose :: Key -> PitchClass -> Accidental -> Degree -> PitchClass
+--transpose :: Key -> PitchClass -> Accidental -> Degree -> PitchClass
 transpose (Key inK m) outK = tone $ Key (step (head $ steps outK inK) concert) m
 
 step (0,0) = id
@@ -109,15 +108,15 @@ step (0,h) = step (0,h-1) . inc Half
 step (w,h) = step (w-1,h) . inc Whole
 
 -- poor strategy, how fix?
-steps k1 k2 = filter ((k2 ==) . flip step k1) [(w,h) | w <- [0..5], h <- [0..2]]
+steps k1 k2 = filter ((k2 ==) . (`step` k1)) [(w,h) | w <- [0..5], h <- [0..2]]
 
 diff d1 d2 = pos d2 - pos d1
-pos = fromJust . flip elemIndex enum
-get xs = (xs !!) . flip mod (length xs)
+pos = fromMaybe (error "not an elem") . (`elemIndex` enum)
+get xs = (xs !!) . (`mod` (length xs))
 
 enum :: (Enum a, Bounded a) => [a]
 enum = [minBound .. maxBound]
-degrees = enum :: [Degree]
+degrees   = enum :: [Degree  ]
 whiteKeys = enum :: [WhiteKey]
 
 data Step = Whole | Half deriving Show
@@ -125,24 +124,22 @@ major = [Whole, Whole, Half, Whole, Whole, Whole, Half]
 minor = modal 6 major
 modal n s = take (length s) $ drop (n-1) $ cycle s
 
-scale k = tone k Natural <$> enum
+scale k = flip (tone k) Natural <$> enum
 
-tone :: Key -> Accidental -> Degree -> PitchClass
-tone (Key pc m) acc d = getNote pc (pos d) acc $ 
-        case m of Major -> major
-                  Minor -> minor
+tone :: Key -> Degree -> Accidental -> PitchClass
+tone (Key pc m) = getNote pc m' . pos
+  where m' = case m of Major -> major
+                       Minor -> minor
 
-getNote :: PitchClass -> Int -> Accidental -> [Step] -> PitchClass
-getNote (PitchClass w a) 0 acc _         = PitchClass w $ enum !! ((pos a) + diff Natural acc)
-getNote p                d acc (s:steps) = getNote (inc s p) (d - 1) acc steps
+getNote :: PitchClass -> [Step] -> Int -> Accidental -> PitchClass
+getNote (PitchClass w a) _         0 = PitchClass w . (enum !!) . (pos a +) . diff Natural
+getNote p                (s:steps) d = getNote (inc s p) steps $ d - 1
 
-inc s (PitchClass w a) = PitchClass w' a'
-        where w' = get enum $ (pos w) + 1
-              a' = fix s $ get major $ pos w -- depends on WhiteKeys as [C .. B]
-              fix Half Whole = adj (-) a
+inc s (PitchClass w a) = PitchClass (get enum $ (pos w) + 1) (fix s $ get major $ pos w) -- depends on WhiteKeys as [C .. B]
+        where fix Half Whole = adj (-) a
               fix Whole Half = adj (+) a
               fix _     _    = a -- args are equal
-              adj op n = enum !! op (pos n) 1 -- op can't be sectioned to pointfree this?
+              adj op = (enum !!) . (`op` 1) . pos
 
 data Transcription = Transcription {
         title    :: Title 
@@ -178,7 +175,7 @@ type Composer = String
 type Year = String
 data Section = Section {
         label :: Char 
-      , notes :: [[Element]]
+      , notes :: [(Column,[Element])]
   } deriving (Eq)
 instance Show Section 
   where show (Section l n) = "\nlabel: " ++ pure l ++ "\n" ++ unlines (show <$> n)
@@ -186,11 +183,10 @@ data DegreeNote = DegreeNote Accidental Degree Octave Tie | Rest
   deriving (Eq,Show)
 data Element = Element {
     note     :: DegreeNote
-  , columnElement   :: Column
   , duration :: Duration
   } deriving (Eq)
 instance Show Element
-  where show (Element n c d) = (show n) ++ " " ++ (show $ getDuration d) ++ " col: " ++ (show c)
+  where show (Element n d) = (show n) ++ " " ++ (show $ getDuration d)
 data Degree = First | Second | Third | Fourth | Fifth | Sixth | Seventh
   deriving (Eq,Show,Enum,Bounded)
 type Octave = Maybe Int
@@ -222,13 +218,13 @@ haskellDef' = P.LanguageDef
 type PT m b = (Stream s m Char, Monad m, Functor m) => ParsecT s u m b -- how remove Char constraint from s?
 type P b = forall m. PT m b
 
--- a $> b = a >> return b
+-- a $> b = a *> return b
 ($>) = flip (<$)
 
 --tryChoice :: [Parser a] -> Parser a
 tryChoice = choice . (try <$>)
 
-line = manyTill anyChar newline -- (newline <|> (eof >> return '\n'))
+line = manyTill anyChar newline -- (newline <|> (eof *> return '\n'))
 
 --transcript :: P Transcription
 transcript = do 
@@ -240,8 +236,8 @@ transcript = do
   start    <- startP
   pattern  <- patternP
   voices   <- many1 voiceP
-  sections <- runPTR (columnVoice <$> voices) (many1 sectionP) 
-  whiteSpace >> eof
+  sections <- runPTR (columnVoice <$> voices) $ many1 sectionP
+  whiteSpace *> eof
   return $ Transcription title composer year key time start pattern voices sections
         
 -- thanks saizan@#haskell!
@@ -249,66 +245,63 @@ mapParsecT :: (Functor m, Functor n, Monad m, Monad n) => (forall a. m a -> n a)
 mapParsecT f p = mkPT $ \ s -> f $ (f <$>) <$> runParsecT p s -- how pointfree s?
 
 runPTR :: r -> ParsecT s u (Reader r) a -> Parsec s u a
-runPTR r = mapParsecT $ flip runReaderT r -- how pointfree r?
+runPTR r = mapParsecT $ (`runReaderT` r) -- how pointfree r?
 
 voiceP :: P Voice
-voiceP = try $ whiteSpace >> Voice <$> col (/= 1) "voice spec can't be in column 1 (which is for durations)" <*> instrumentP
+voiceP = try $ whiteSpace *> (Voice <$> col (/= 1) "voice spec can't be in column 1 (which is for durations)" <*> instrumentP)
 
 instrumentP :: P Instrument
 instrumentP = Instrument <$> manyTill anyChar (try $ string " in ") <*> pitchClassP <*> octaveP
 
 pitchClassP :: P PitchClass
-pitchClassP = whiteSpace >> PitchClass <$> whiteKeyP <*> accidentalP
+pitchClassP = whiteSpace *> (PitchClass <$> whiteKeyP <*> accidentalP)
 
 whiteKeyP, whiteKeyP' :: P WhiteKey
 whiteKeyP' = read . pure . toUpper <$> tryChoice (char <$> ws ++ (toLower <$> ws)) -- <?> "WhiteKey"
   where ws = head . show <$> whiteKeys
-whiteKeyP = tryChoice (enum' <$> enum)
+whiteKeyP = tryChoice $ enum' <$> enum
         where enum' s = s <$ tryChoice (char <$> [u, toLower u])
                where u = head $ show s
 
 modeP :: P Mode
-modeP = whiteSpace >> tryChoice [ string "min" $> Minor
+modeP = whiteSpace *> tryChoice [ string "min" $> Minor
                                 , string "maj" $> Major
                                 ] -- <?> "Mode"
 
 keyP :: P Key
-keyP = whiteSpace >> Key <$> pitchClassP <*> modeP
+keyP = whiteSpace *> (Key <$> pitchClassP <*> modeP)
 
 timeP :: P Time
-timeP = whiteSpace >> natural
+timeP = whiteSpace *> natural
 
 --startP :: P Start
 startP = frac
 
 patternP :: P Pattern
-patternP = whiteSpace >> many1 letter
+patternP = whiteSpace *> many1 letter
 
 --sectionP :: (MonadReader [Column] m) => PT m Section
-sectionP = try $ Section <$> (whiteSpace >> letter <* whiteSpace) <*> sepEndBy1 parts whiteSpace
+sectionP = try $ Section <$> (whiteSpace *> letter <* whiteSpace) <*> (getVoices <$> sepEndBy1 parts whiteSpace)
+
+getVoices nss = (`getVoices'` nss) <$> (nub . concat $ (fst <$>) . snd <$> nss)
+getVoices' c = (c,) . reverse . foldl (flip f) []
+  where f (d,ns) = g d $ filter ((c == ) . fst) ns
+        g _ []      []         = error "first line of section must have note for every voice" -- should we assume rest or tie from previous section?  what if first section?        
+        g d []      (now:done) = now{duration = d + duration now} : done
+        g d [(_,n)] done       = Element n d : done
+        g _ _       _          = error "impossible -- two notes in one row in same column!?"
 
 --parts :: (MonadReader [Column] m) => PT m [Element]
-parts = do
-   col (== 1) "duration must fall at beginning of line in column 1"
-   d <- durationP
-   ns <- many1 $ tryChoice [degreeNoteP, restP]
-   return $ (\(c,x) -> Element x c d) <$> ns
+parts = col (== 1) "duration must fall at beginning of line in column 1" *> ((,) <$> durationP <*> many1 (tryChoice [degreeNoteP, restP]))
 
 degreeNoteP,restP :: (MonadReader [Column] m) => PT m (Column, DegreeNote)
-degreeNoteP = w' $ DegreeNote <$> accidentalP <*> degreeP <*> octaveP <*> pure False
-restP = w' $ Rest <$ char 'R'
+degreeNoteP = w $ DegreeNote <$> accidentalP <*> degreeP <*> octaveP <*> pure False
+restP       = w $ Rest <$ char 'R'
 
 --w' :: (Eq a, Num a, MonadReader [a] m) => P b -> PT m (a, b)
-w' = (((,) <$> (whiteSpace >> col (/= 1) e) <* (flip col e' . flip elem =<< lift ask) ) <*>) 
+w = ((,) <$> (whiteSpace *> col (/= 1) e) <* ((`col` e') . flip elem =<< lift ask) <*>) 
   where e  = "first item in line must be duration, not note"
         e' = "non-part column, do you have some naughty tabs?"
-
-w :: (Eq a, Num a, MonadReader [a] m) => b -> PT m (a, b)
-w d = do
-  c <- whiteSpace >> col (/= 1) "first item in line must be duration, not note"
-  cs <- ask
-  col (`elem` cs) "non-part column, do you have some naughty tabs?"
-  return (c,d)
 
 col :: (Num b) => (b -> Bool) -> String -> P b
 col f s = do 
@@ -317,7 +310,7 @@ col f s = do
           else unexpected s
 
 degreeP :: P Degree
-degreeP = fromJust . flip M.lookup m <$> tryChoice (string <$> M.keys m)
+degreeP = fromMaybe (error "not a degree") . (`M.lookup` m) <$> tryChoice (string <$> M.keys m)
   where m = M.fromList $ zip (show <$> [1..]) degrees
 
 accidentalP :: P Accidental
@@ -340,5 +333,5 @@ countChar = (length <$>) . many1 . char
 durationP = (/ 4) <$> frac
 
 --frac :: (Fractional b) => P b
---frac = (fromRational . toRational ||| fromRational . toRational) <$> (whiteSpace >> naturalOrFloat) -- requires leading 0.
+--frac = (fromRational . toRational ||| fromRational . toRational) <$> (whiteSpace *> naturalOrFloat) -- requires leading 0.
 frac = fromRational . toRational <$> floating3 False
