@@ -2,7 +2,9 @@
      NoMonomorphismRestriction
    , FlexibleContexts 
    , RankNTypes
-   , TupleSections #-}
+   , TupleSections
+-- , ImpredicativeTypes
+   #-}
 
 -- remove unix dependency in music-dynamics-literal
 
@@ -13,7 +15,7 @@ import Music.Lilypond.Pitch
 import Data.AdditiveGroup
 
 import Text.Parsec
---import Text.Parsec.ByteString.Lazy
+--import qualified Text.Parsec.ByteString.Lazy as B
 import Text.Parsec.String
 import qualified Text.Parsec.Token as P
 -- import Text.Parsec.Language (haskellDef) -- haskellDef replaced below to generalize from String/Identity
@@ -35,14 +37,45 @@ import Control.Monad.Reader
 import Control.Monad.Identity
 import GHC.Exts
 
-main = either print engrave =<< parseFromFile transcript (f ++ ".dt") -- dt = 'degreeTranscript format'
-  where f = "tears"
-        engrave = writeParts f
-        debug = writeFile (f ++ ".debug") . show
+import Options.Applicative hiding (Parser,option)
+import qualified Options.Applicative as O
 
-writeParts f t = do 
-  mapM_ (writeMusic f . fix . lily t) v
-  writeScore f t
+data Args = Args
+  { files    :: [FilePath]
+  , openPDFs :: Bool 
+  }
+
+args :: O.Parser Args
+args = Args
+  <$> arguments str
+      ( {-long "files"
+     <> -}
+        metavar "FILEs"
+     <> help ".dt (degree transcript) files to engrave" 
+     <> value ["tears"]
+     <> showDefault)
+  <*> flag True False -- opposite sense of switch
+      ( long "view"
+     <> help "automatically open the pdfs" )
+
+main :: IO ()
+main = execParser opts >>= engrave
+  where
+    opts = info (helper <*> args)
+      ( fullDesc
+     <> progDesc "use lilypond to engrave degree transcript (.dt) files FILEs"
+     <> header "tears - engrave degree transcripts using lilypond" 
+      )
+
+engrave :: Args -> IO ()
+engrave (Args fs p) = mapM_ one fs
+  where one f = either print (writeParts f p) =<< parseFromFile transcript (f ++ ".dt")
+        debug f = writeFile (f ++ ".debug") . show
+
+writeParts :: FilePath -> Bool -> Transcription -> IO ()
+writeParts f p t = do 
+  mapM_ (writeMusic f p . fix . lily t) v
+  writeScore f p t
   where v = concat $ (\xs -> 
               if length xs > 1
                  then (\(x@(Voice _ i@(Instrument s _ _)),n) -> x{instrument = i{name = s ++ "(" ++ show n ++ ")"}}) <$> zip xs [1..]
@@ -50,7 +83,8 @@ writeParts f t = do
             ) <$> groupWith (show . instrument) (voices t)
         fix (a,b,c,d) = (a ^+^ d,b,c)
 
-writeScore f t = writeMusic f (each {- single -}, ex $ head ms, i $ head ms)
+writeScore :: FilePath -> Bool -> Transcription -> IO ()
+writeScore f b t = writeMusic f b (each {- single -}, ex $ head ms, i $ head ms)
   where ms = lily t . (`Voice` Instrument "score" concert Nothing) <$> nub (columnVoice <$> voices t)
         m  (x,_,_,_) = x
         ex (_,x,_,_) = x
@@ -60,15 +94,16 @@ writeScore f t = writeMusic f (each {- single -}, ex $ head ms, i $ head ms)
         each = New "StaffGroup" Nothing $ Simultaneous False $ s <$> ms
         s m' = New "Staff" Nothing $ m m' ^+^ p m'         
 
+concert :: PitchClass
 concert = PitchClass C Natural
 
 --not lazy, but hey...
---safeLookup :: a -> [(a,b)] -> b
+safeLookup :: (Eq a) => a -> [(a,b)] -> b
 safeLookup a xs = case filter ((a ==) . fst) xs of []      -> error "no match"
                                                    _:_:_   -> error "multiple matches"
                                                    [(_,b)] -> b
 
---lily :: Transcription -> Voice -> (Music,String,String)
+lily :: Transcription -> Voice -> (Music,String,String,Music)
 lily t v = (m,ex,i,p)
   where m =     Clef Treble
             ^+^ L.Time (time t) 4
@@ -82,7 +117,7 @@ getVoice :: Column -> Section -> [Element]
 getVoice c = safeLookup c . notes
 
 lily' :: Time -> Key -> PitchClass -> [Element] -> Music
-lily' t inKM outK s = Mark Nothing ^+^ Sequential [sumV $ lily'' inKM outK <$> bars (Duration $ (fromIntegral t) / 4) s] ^+^ Bar Double
+lily' t inKM outK s = Mark Nothing ^+^ sumV (lily'' inKM outK <$> bars (Duration $ (fromIntegral t) / 4) s) ^+^ Bar Double
 
 bars :: Duration -> [Element] -> [Element]
 bars t ns = bars' t 0 ns []
@@ -100,18 +135,25 @@ lily'' :: Key -> PitchClass -> Element -> Music
 lily'' _    _    (Element  Rest                dur) = L.Rest                                                        (Just dur) []
 lily'' inKM outK (Element (DegreeNote a d o t) dur) = Note (NotePitch (Pitch (transpose inKM outK d a, o)) Nothing) (Just dur) [Tie | t] -- silly hlint comprehension trick
 
---transpose :: Key -> PitchClass -> Accidental -> Degree -> PitchClass
+transpose :: Key -> PitchClass -> Degree -> Accidental -> PitchClass
 transpose (Key inK m) outK = tone $ Key (step (head $ steps outK inK) concert) m
 
+step :: (Natural, Natural) -> PitchClass -> PitchClass
 step (0,0) = id
 step (0,h) = step (0,h-1) . inc Half
 step (w,h) = step (w-1,h) . inc Whole
 
 -- poor strategy, how fix?
+steps :: PitchClass -> PitchClass -> [(Natural,Natural)]
 steps k1 k2 = filter ((k2 ==) . (`step` k1)) [(w,h) | w <- [0..5], h <- [0..2]]
 
+diff :: (Bounded a, Bounded a1, Enum a, Enum a1, Eq a, Eq a1) => a1 -> a -> Int
 diff d1 d2 = pos d2 - pos d1
+
+pos :: (Bounded a, Enum a, Eq a) => a -> Int
 pos = fromMaybe (error "not an elem") . (`elemIndex` enum)
+
+get :: [a] -> Int -> a
 get xs = (xs !!) . (`mod` length xs)
 
 enum :: (Enum a, Bounded a) => [a]
@@ -119,11 +161,14 @@ enum = [minBound .. maxBound]
 degrees   = enum :: [Degree  ]
 whiteKeys = enum :: [WhiteKey]
 
-data Step = Whole | Half deriving Show
+data Step = Whole | Half deriving (Eq, Show)
 major = [Whole, Whole, Half, Whole, Whole, Whole, Half]
 minor = modal 6 major
+
+modal :: Int -> [a] -> [a]
 modal n s = take (length s) $ drop (n-1) $ cycle s
 
+scale :: Key -> [PitchClass]
 scale k = flip (tone k) Natural <$> enum
 
 tone :: Key -> Degree -> Accidental -> PitchClass
@@ -135,6 +180,7 @@ getNote :: PitchClass -> [Step] -> Int -> Accidental -> PitchClass
 getNote (PitchClass w a) _         0 = PitchClass w . (enum !!) . (pos a +) . diff Natural
 getNote p                (s:steps) d = getNote (inc s p) steps $ d - 1
 
+inc :: Step -> PitchClass -> PitchClass
 inc s (PitchClass w a) = PitchClass (get enum $ (pos w) + 1) $ fix s $ get major $ pos w -- depends on WhiteKeys as [C .. B]
         where fix Half Whole = adj (-) a
               fix Whole Half = adj (+) a
@@ -192,11 +238,20 @@ data Degree = First | Second | Third | Fourth | Fifth | Sixth | Seventh
 type Octave = Maybe Int
 type Tie = Bool
 
+lexxer :: Stream s m Char => P.GenTokenParser s u m
 lexxer = P.makeTokenParser haskellDef'
+
+whiteSpace :: P ()
 whiteSpace = P.whiteSpace lexxer
+
+natural :: (Num b) => P b
 -- natural' = toNatural . (fromInteger :: Integer -> Word) <$> P.natural lexxer
 natural = fromIntegral <$> P.natural lexxer
+
+{-
+naturalOrFloat :: P (Either Integer Double)
 naturalOrFloat = P.naturalOrFloat lexxer
+-}
 
 -- stolen from http://hackage.haskell.org/package/parsec-3.1.3/docs/src/Text-Parsec-Language.html#haskellStyle
 -- since haskellDef locks us in to Strings and Identity
@@ -218,13 +273,14 @@ haskellDef' = P.LanguageDef
 type PT m b = (Stream s m Char, Monad m, Functor m) => ParsecT s u m b -- how remove Char constraint from s?
 type P b = forall m. PT m b
 
--- a $> b = a *> return b
+($>) :: Functor f => f b -> a -> f a
 ($>) = flip (<$)
 
---tryChoice :: [Parser a] -> Parser a
+-- tryChoice :: [P b] -> P b
 tryChoice = choice . (try <$>)
 
-line = manyTill anyChar newline -- (newline <|> (eof *> return '\n'))
+line :: P String
+line = manyTill anyChar newline -- $ newline <|> (eof *> return '\n')
 
 --transcript :: P Transcription
 transcript = do 
@@ -283,6 +339,7 @@ patternP = whiteSpace *> many1 letter
 --sectionP :: (MonadReader [Column] m) => PT m Section
 sectionP = try $ Section <$> (whiteSpace *> letter <* whiteSpace) <*> (getVoices <$> sepEndBy1 parts whiteSpace)
 
+getVoices :: [(Duration, [(Column, DegreeNote)])] -> [(Column, [Element])]
 getVoices nss = (`getVoices'` nss) <$> (nub . concat $ (fst <$>) . snd <$> nss)
 getVoices' c = (c,) . reverse . foldl (flip f) []
   where f (d,ns) = g d $ filter ((c == ) . fst) ns
@@ -291,14 +348,14 @@ getVoices' c = (c,) . reverse . foldl (flip f) []
         g d [(_,n)] done       = Element n d : done
         g _ _       _          = error "impossible -- two notes in one row in same column!?"
 
---parts :: (MonadReader [Column] m) => PT m [Element]
+--parts :: (MonadReader [Column] m) => PT m (Duration, [(Column, DegreeNote)])
 parts = col (== 1) "duration must fall at beginning of line in column 1" *> ((,) <$> durationP <*> many1 (tryChoice [degreeNoteP, restP]))
 
 degreeNoteP,restP :: (MonadReader [Column] m) => PT m (Column, DegreeNote)
 degreeNoteP = w $ DegreeNote <$> accidentalP <*> degreeP <*> octaveP <*> pure False
 restP       = w $ Rest <$ char 'R'
 
---w' :: (Eq a, Num a, MonadReader [a] m) => P b -> PT m (a, b)
+--w :: (Eq a, Num a, MonadReader [a] m) => P b -> PT m (a, b)
 w = ((,) <$> (whiteSpace *> col (/= 1) e) <* ((`col` e') . flip elem =<< lift ask) <*>) 
   where e  = "first item in line must be duration, not note"
         e' = "non-part column, do you have some naughty tabs?"
@@ -327,6 +384,7 @@ octaveP = optionMaybe $ tryChoice [
   , negate <$> countChar '-'
   ]
 
+countChar :: Char -> P Int
 countChar = (length <$>) . many1 . char
 
 --durationP :: P Duration

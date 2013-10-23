@@ -29,8 +29,8 @@ removeIfExists fileName = removeFile fileName `catch` handleExists
           | isDoesNotExistError e = return ()
           | otherwise = throwIO e
 
-writeMusic :: FilePath -> (Music,String,String) -> IO ()
-writeMusic path' (m,ex,t) = do
+writeMusic :: FilePath -> Bool -> (Music,String,String) -> IO ()
+writeMusic path' b (m,ex,t) = do
     flip when (error $ "couldn't find " ++ exe ++ " on system path") =<< isNothing <$> findExecutable exe
     v <- if windows 
         then return "2.16.2" --permission denied in windows for createProcess
@@ -45,7 +45,7 @@ writeMusic path' (m,ex,t) = do
             putStrLn $ '\n' : cmd
             void $ system cmd
                 -- rawSystem exe [ly'] -- createProcess: permission denied
-            void $ system $ "start" ++ " " ++ "\"\"" ++ " " ++ pdf -- weird, that middle empty string isn't necessary on some windows versions/configs or something?
+            when b $ void $ system $ "start" ++ " " ++ "\"\"" ++ " " ++ pdf -- weird, that middle empty string isn't necessary on some windows versions/configs or something?
                 -- system pdf -- waits for pdf viewer to close
                 -- rawSystem "start" [pdf] -- createProcess says no such file/directory as 'start'
                 -- rawSystem pdf [] -- would work, but createProcess says exec format error
@@ -55,7 +55,7 @@ writeMusic path' (m,ex,t) = do
             hPutStr h_in s
             hClose h_in
             print =<< waitForProcess p
-            void $ rawSystem "xdg-open" [pdf]
+            when b $ void $ rawSystem "xdg-open" [pdf]
 
 {-
 C:\eflister\lilypond\src>"C:\Program Files (x86)\LilyPond\usr\bin\LilyPond" "tears.tenor recorder in C.ly"
