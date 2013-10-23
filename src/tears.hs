@@ -48,15 +48,16 @@ data Args = Args
 args :: O.Parser Args
 args = Args
   <$> arguments str
-      ( {-long "files"
-     <> -}
-        metavar "FILEs"
-     <> help ".dt (degree transcript) files to engrave" 
+      ( metavar "FILEs"
+     <> help ".dt (degree transcript) files to engrave (omit extension)" 
      <> value ["tears"]
-     <> showDefault)
-  <*> flag True False -- opposite sense of switch
+     <> showDefault
+      )
+  <*> switch
       ( long "view"
-     <> help "automatically open the pdfs" )
+     <> short 'v'
+     <> help "automatically open the pdfs" 
+      )
 
 main :: IO ()
 main = execParser opts >>= engrave
@@ -69,7 +70,7 @@ main = execParser opts >>= engrave
 
 engrave :: Args -> IO ()
 engrave (Args fs p) = mapM_ one fs
-  where one f = either print (writeParts f p) =<< parseFromFile transcript (f ++ ".dt")
+  where one f = either print (writeParts f p {- debug f -}) =<< parseFromFile transcript (f ++ ".dt")
         debug f = writeFile (f ++ ".debug") . show
 
 writeParts :: FilePath -> Bool -> Transcription -> IO ()
@@ -232,7 +233,7 @@ data Element = Element {
   , duration :: Duration
   } deriving (Eq)
 instance Show Element
-  where show (Element n d) = show n ++ " " ++ show (getDuration d)
+  where show (Element n d) = "\n" ++ show n ++ " \t" ++ show (getDuration d)
 data Degree = First | Second | Third | Fourth | Fifth | Sixth | Seventh
   deriving (Eq,Show,Enum,Bounded)
 type Octave = Maybe Int
