@@ -6,6 +6,8 @@
 -- , ImpredicativeTypes
    #-}
 
+module Music.Lilypond.Tears (main) where
+
 -- remove unix dependency in music-dynamics-literal
 
 import qualified Music.Lilypond as L
@@ -50,7 +52,7 @@ args = Args
   <$> arguments1 str
       ( metavar "FILEs"
      <> help ".dt (degree transcript) files to engrave (omit extension)" 
---     <> value "\"string with spaces\", \"another one\""-- "tears"
+--     <> value "\"string with spaces\", \"another one\""-- "tears" -- see https://github.com/pcapriotti/optparse-applicative/issues/53
      <> showDefault
       )
   <*> switch
@@ -66,6 +68,7 @@ main = execParser opts >>= engrave
       ( fullDesc
      <> progDesc "use lilypond to engrave degree transcript (.dt) files FILEs"
      <> header "tears - engrave degree transcripts using lilypond" 
+     -- maybe request an "example usage" InfoMod?
       )
 
 engrave :: Args -> IO ()

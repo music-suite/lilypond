@@ -32,30 +32,30 @@ removeIfExists fileName = removeFile fileName `catch` handleExists
 writeMusic :: FilePath -> Bool -> (Music,String,String) -> IO ()
 writeMusic path' b (m,ex,t) = do
     flip when (error $ "couldn't find " ++ exe ++ " on system path") =<< isNothing <$> findExecutable exe
-    v <- if windows 
-        then return "2.16.2" --permission denied in windows for createProcess
-        else readProcess exe ["-v"] "" 
+    --permission denied in windows for createProcess/readProcess/rawSystem for exe not on PATH
+    v <- readProcess exe ["-v"] "" 
     let s = "\\version \"" ++ (last . words . head . lines) v ++ "\" " ++ ex ++ show (pretty m)      
---  putStrLn s
     mapM_ removeIfExists [ly, pdf']
-    writeFile ly s
 
-    if windows 
+    if False
         then do
-            putStrLn $ '\n' : cmd
-            void $ system cmd
-                -- rawSystem exe [ly'] -- createProcess: permission denied
-            when b $ void $ system $ "start" ++ " " ++ "\"\"" ++ " " ++ pdf -- weird, that middle empty string isn't necessary on some windows versions/configs or something?
-                -- system pdf -- waits for pdf viewer to close
-                -- rawSystem "start" [pdf] -- createProcess says no such file/directory as 'start'
-                -- rawSystem pdf [] -- would work, but createProcess says exec format error
+            writeFile ly s            
+            print =<< rawSystem exe [out,ly]
         else do -- cooler to skip file system
-            (Just h_in, _,  _, p) <- createProcess (proc exe ["-o" ++ path, "-"]){ std_in = CreatePipe }
+            (Just h_in, _,  _, p) <- createProcess (proc exe [out, "-"]){ std_in = CreatePipe }
             hSetBinaryMode h_in False
             hPutStr h_in s
             hClose h_in
-            print =<< waitForProcess p
-            when b $ void $ rawSystem "xdg-open" [pdf]
+            print =<< waitForProcess p       
+            
+    when b $ print =<< if windows 
+        then system $ "start" ++ " " ++ "\"\"" ++ " " ++ pdf -- weird, that middle empty string isn't necessary on some windows versions/configs or something?
+                -- system pdf -- waits for pdf viewer to close
+                -- rawSystem "start" [pdf] -- createProcess says no such file/directory as 'start'
+                -- rawSystem pdf [] -- would work, but createProcess says exec format error            
+        else rawSystem "xdg-open" [pdf] -- probably won't work on osx...
+
+    putStrLn ""     
 
 {-
 C:\eflister\lilypond\src>"C:\Program Files (x86)\LilyPond\usr\bin\LilyPond" "tears.tenor recorder in C.ly"
@@ -88,11 +88,14 @@ Prelude System.Cmd> rawSystem "\"C:\\Program Files (x86)\\LilyPond\\usr\\bin\\Li
         pdf' = path ++ ".pdf"
         pdf = wrap "\"" pdf'
         ly = path ++ ".ly"
-        ly' = wrap "\"" ly
+--        ly' = wrap "\"" ly
         path = path' ++ "." ++ t
         wrap c s = c ++ s ++ c
-        cmd' = wrap "\"" exe ++ " " ++ ly'
-        cmd = exe ++ " " ++ ly'
+--        cmd' = wrap "\"" exe ++ " " ++ ly'
+--        cmd = exe ++ " " ++ ly'
+        out = "-o" ++ path
+--        out' = "-o=" ++ wrap "\"" path
+--        cmd'' = cmd ++ " " ++ out'
 
 data Format = PDF | PNG | PS
 
