@@ -17,13 +17,12 @@ import Music.Lilypond.Pitch
 import Data.AdditiveGroup
 
 import Text.Parsec
-import Text.Parsec.Text
+import Text.Parsec.Text.Lazy
 import qualified Text.Parsec.ByteString.Lazy as B
 -- import Text.Parsec.String
 import qualified Text.Parsec.Token as P
 -- import Text.Parsec.Language (haskellDef) -- haskellDef replaced below to generalize from String/Identity
--- import Text.ParserCombinators.Parsec.Number -- cabal install parsec-numbers 
-import NumberGen -- my generalization of parsec-numbers to ParsecT
+import Text.Parsec.Number -- cabal install parsec3-numbers 
 
 import Data.Ratio
 import Numeric.Natural hiding (natural)

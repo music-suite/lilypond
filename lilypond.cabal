@@ -48,11 +48,10 @@ executable tears
   main-is:          Main.hs
   other-modules:
     Music.Lilypond.Tears
-    NumberGen
   build-depends:
       base >= 4 && <= 5
     , lilypond
---    , parsec-numbers -- needed to hack generalization to ParsecT
+    , parsec3-numbers
     , optparse-applicative
     , mtl
     , containers
