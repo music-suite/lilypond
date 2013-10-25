@@ -17,11 +17,12 @@ import Music.Lilypond.Pitch
 import Data.AdditiveGroup
 
 import Text.Parsec
---import qualified Text.Parsec.ByteString.Lazy as B
-import Text.Parsec.String
+import Text.Parsec.Text
+import qualified Text.Parsec.ByteString.Lazy as B
+-- import Text.Parsec.String
 import qualified Text.Parsec.Token as P
 -- import Text.Parsec.Language (haskellDef) -- haskellDef replaced below to generalize from String/Identity
---import Text.ParserCombinators.Parsec.Number -- cabal install parsec-numbers 
+-- import Text.ParserCombinators.Parsec.Number -- cabal install parsec-numbers 
 import NumberGen -- my generalization of parsec-numbers to ParsecT
 
 import Data.Ratio
@@ -52,7 +53,7 @@ args = Args
   <$> arguments1 str
       ( metavar "FILEs"
      <> help ".dt (degree transcript) files to engrave (omit extension)" 
---     <> value "\"string with spaces\", \"another one\""-- "tears" -- see https://github.com/pcapriotti/optparse-applicative/issues/53
+--   <> value "\"string with spaces\", \"another one\""-- "tears" -- see https://github.com/pcapriotti/optparse-applicative/issues/53
      <> showDefault
       )
   <*> switch
@@ -73,7 +74,7 @@ main = execParser opts >>= engrave
 
 engrave :: Args -> IO ()
 engrave (Args fs p) = mapM_ one fs
-  where one f = either print (writeParts f p {- debug f -}) =<< parseFromFile transcript (f ++ ".dt")
+  where one f = either print (writeParts f p {- debug f -}) =<< B.parseFromFile transcript (f ++ ".dt")
         debug f = writeFile (f ++ ".debug") . show
 
 writeParts :: FilePath -> Bool -> Transcription -> IO ()
@@ -101,7 +102,7 @@ writeScore f b t = writeMusic f b (each {- single -}, ex $ head ms, i $ head ms)
 concert :: PitchClass
 concert = PitchClass C Natural
 
---not lazy, but hey...
+-- not lazy, but hey...
 safeLookup :: (Eq a) => a -> [(a,b)] -> b
 safeLookup a xs = case filter ((a ==) . fst) xs of []      -> error "no match"
                                                    _:_:_   -> error "multiple matches"
@@ -280,13 +281,14 @@ type P b = forall m. PT m b
 ($>) :: Functor f => f b -> a -> f a
 ($>) = flip (<$)
 
---tryChoice :: [P b] -> P b
+-- tryChoice :: [P b] -> P b
 tryChoice = choice . (try <$>)
 
+-- Parsec.Text or Parsec.Bytestring is screwing up this newline and not eating the \r (shows up in pdf).  doesn't happen with Parsec.String
 line :: P String
 line = manyTill anyChar newline -- $ newline <|> (eof *> return '\n')
 
---transcript :: P Transcription
+-- transcript :: P Transcription
 transcript = do 
   title    <- line
   composer <- line
@@ -403,5 +405,5 @@ durationP :: P Duration
 durationP = (/ 4) <$> frac
 
 frac :: (Fractional b) => P b
---frac = (fromRational . toRational ||| fromRational . toRational) <$> (whiteSpace *> naturalOrFloat) -- requires leading 0.
+-- frac = (fromRational . toRational ||| fromRational . toRational) <$> (whiteSpace *> naturalOrFloat) -- requires leading 0.
 frac = fromRational . toRational <$> floating3 False
