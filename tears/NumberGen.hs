@@ -206,7 +206,7 @@ sign = (char '-' >> return negate) <|> (optional (char '+') >> return id)
 {- | parse plain non-negative decimal numbers given by a non-empty sequence
 of digits -}
 --decimal :: Integral i => CharParser st i
-decimal :: (Monad m, Integral i) => ParsecT [Char] st m i
+--decimal :: (Monad m, Integral i) => ParsecT [Char] st m i
 decimal = number 10 digit
 
 -- | parse a binary number

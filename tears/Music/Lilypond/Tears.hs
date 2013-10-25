@@ -3,7 +3,7 @@
    , FlexibleContexts 
    , RankNTypes
    , TupleSections
--- , ImpredicativeTypes
+   , ImpredicativeTypes
    #-}
 
 module Music.Lilypond.Tears (main) where
@@ -274,13 +274,13 @@ haskellDef' = P.LanguageDef
                 , P.caseSensitive  = undefined -- True                
                 }
 
-type PT m b = (Stream s m Char, Monad m, Functor m) => ParsecT s u m b -- how remove Char constraint from s?
+type PT m b = (Stream s m Char, Monad m, Functor m) => ParsecT s u m b -- how generalize from Char?
 type P b = forall m. PT m b
 
 ($>) :: Functor f => f b -> a -> f a
 ($>) = flip (<$)
 
--- tryChoice :: [P b] -> P b
+--tryChoice :: [P b] -> P b
 tryChoice = choice . (try <$>)
 
 line :: P String
@@ -334,13 +334,13 @@ keyP = whiteSpace *> (Key <$> pitchClassP <*> modeP)
 timeP :: P Time
 timeP = whiteSpace *> natural
 
---startP :: P Start
+startP :: P Start
 startP = frac
 
 patternP :: P Pattern
 patternP = whiteSpace *> many1 letter
 
---sectionP :: (MonadReader [Column] m) => PT m Section
+sectionP :: (MonadReader [Column] m) => PT m Section
 sectionP = try $ Section <$> (whiteSpace *> letter <* whiteSpace) <*> (getVoices <$> sepEndBy1 parts whiteSpace)
 
 getVoices :: [(Duration, [(Column, DegreeNote)])] -> [(Column, [Element])]
@@ -352,14 +352,22 @@ getVoices' c = (c,) . reverse . foldl (flip f) []
         g d [(_,n)] done       = Element n d : done
         g _ _       _          = error "impossible -- two notes in one row in same column!?"
 
---parts :: (MonadReader [Column] m) => PT m (Duration, [(Column, DegreeNote)])
+parts :: (MonadReader [Column] m) => PT m (Duration, [(Column, DegreeNote)])
 parts = col (== 1) "duration must fall at beginning of line in column 1" *> ((,) <$> durationP <*> many1 (tryChoice [degreeNoteP, restP]))
 
 degreeNoteP,restP :: (MonadReader [Column] m) => PT m (Column, DegreeNote)
 degreeNoteP = w $ DegreeNote <$> accidentalP <*> degreeP <*> octaveP <*> pure False
 restP       = w $ Rest <$ char 'R'
 
---w :: (Eq a, Num a, MonadReader [a] m) => P b -> PT m (a, b)
+{-
+w :: (Eq a, Functor m, Num a, Stream s m Char,
+      MonadReader [a] m) => --PR m b (a,b)
+     ParsecT s u m b -> ParsecT s u m (a, b)
+
+type PR m a b = (Stream s m Char) => ParsecT s u m a -> ParsecT s u m b
+-}
+
+-- w :: (Eq a, Num a, MonadReader [a] m) => PT m b -> PT m (a, b)
 w = ((,) <$> (whiteSpace *> col (/= 1) e) <* ((`col` e') . flip elem =<< lift ask) <*>) 
   where e  = "first item in line must be duration, not note"
         e' = "non-part column, do you have some naughty tabs?"
@@ -391,9 +399,9 @@ octaveP = optionMaybe $ tryChoice [
 countChar :: Char -> P Int
 countChar = (length <$>) . many1 . char
 
---durationP :: P Duration
+durationP :: P Duration
 durationP = (/ 4) <$> frac
 
---frac :: (Fractional b) => P b
+frac :: (Fractional b) => P b
 --frac = (fromRational . toRational ||| fromRational . toRational) <$> (whiteSpace *> naturalOrFloat) -- requires leading 0.
 frac = fromRational . toRational <$> floating3 False
