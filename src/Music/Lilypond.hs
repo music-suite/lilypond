@@ -1,11 +1,11 @@
-
 {-# LANGUAGE 
-    OverloadedStrings, 
-    GeneralizedNewtypeDeriving,
-    StandaloneDeriving,
-    TypeFamilies,
-    ScopedTypeVariables,     
-    ExistentialQuantification #-}
+      OverloadedStrings
+    , GeneralizedNewtypeDeriving
+    , StandaloneDeriving
+    , TypeFamilies
+    , ScopedTypeVariables
+    , ExistentialQuantification 
+    , NoMonomorphismRestriction #-}
 
 -------------------------------------------------------------------------------------
 -- |
@@ -27,6 +27,7 @@ module Music.Lilypond (
         Note(..),
         Clef(..),
         Mode(..),
+        Bar(..),
         
         -- ** Attributes
         Value,
@@ -50,6 +51,7 @@ module Music.Lilypond (
         -- ** Pitch
         Pitch(..),
         PitchClass(..),
+        WhiteKey(..),
         Accidental(..),
         Octaves(..),
 
@@ -131,6 +133,7 @@ module Music.Lilypond (
     )
 where
 
+import Numeric.Natural
 import Data.Ratio
 import Data.String
 import Data.Default
@@ -170,6 +173,10 @@ data ScoreBlock
     -- full markup etc
 -}
 
+data Bar = Double deriving (Eq,Show)
+instance Pretty Bar where
+    pretty Double = "\"||\""
+
 -- | A Lilypond music expression.
 --   
 --   Use the 'Pretty' instance to convert into Lilypond syntax.
@@ -186,13 +193,15 @@ data Music
     | Transpose Pitch Pitch Music                   -- ^ Transpose music (from to).
     | Relative Pitch Music                          -- ^ Use relative octave (octave).
     | Clef Clef                                     -- ^ Clef.
-    | Key Pitch Mode                                -- ^ Key signature.
-    | Time Rational                                 -- ^ Time signature.
+    | Key PitchClass Mode                           -- ^ Key signature.
+    | Time Natural Natural                          -- ^ Time signature.
     | Breathe (Maybe BreathingSign)                 -- ^ Breath mark (caesura)
     | Tempo (Maybe String) (Maybe (Duration,Integer)) -- ^ Tempo mark.
     | New String (Maybe String) Music               -- ^ New expression.
     | Context String (Maybe String) Music           -- ^ Context expression.
-    | Set String Value                            
+    | Set String Value      
+    | Bar Bar
+    | Mark (Maybe String)                      
     deriving (Eq, Show)
 
 instance Pretty Music where
@@ -233,7 +242,7 @@ instance Pretty Music where
 
     pretty (Key p m) = "\\key" <+> pretty p <+> pretty m
     
-    pretty (Time n) = "\\time" <+> pretty n
+    pretty (Time b q) = "\\time" <+> (pretty b <> "/" <> pretty q) -- otherwise 4%4 -> 1%1
     
     pretty (Breathe Nothing) = "\\breathe"
     pretty (Breathe a)       = notImpl "Non-standard breath marks"
@@ -255,15 +264,21 @@ instance Pretty Music where
     pretty (Set name val) =
         "\\set" <+> string name <+> "=" <+> (string . show) val
 
+    pretty (Bar b) = "\\bar" <+> pretty b
+    pretty (Mark Nothing) = "\\mark \\default"
+
     -- pretty _                        = notImpl "Unknown music expression"
 
     prettyList                      = hsep . fmap pretty
+
+instance Pretty Natural where
+    pretty = string . show
 
 instance IsPitch Music where
     fromPitch = (\p -> Note p (Just (1/4)) []) . fromPitch
 
 instance AdditiveGroup Music where
-    zeroV   = Rest (Just $ 1/4) []
+    zeroV   = Sequential [] -- Rest (Just $ 1/4) []
     a ^+^ b = Sequential [a,b]
     negateV = error "No Music.Lilypond.Music.negateV"
 
@@ -529,7 +544,6 @@ instance Pretty Direction where
 
 -- | Notated time in fractions, in @[2^^i | i <- [-10..3]]@.
 newtype Duration   = Duration { getDuration :: Rational }
-
 deriving instance Eq            Duration
 deriving instance Ord           Duration
 deriving instance Num           Duration
@@ -538,6 +552,7 @@ deriving instance Fractional    Duration
 deriving instance Real          Duration
 deriving instance RealFrac      Duration
 deriving instance Show          Duration
+deriving instance Read          Duration
 
 instance Pretty Duration where
     pretty a = string $ pnv (toRational nv) ++ pds ds
